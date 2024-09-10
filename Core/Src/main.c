@@ -27,12 +27,22 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum
+{
+  RS485_READ = 0,
+  RS485_WRITE = 1
+} RS485_Status;
 
+typedef enum
+{
+  RS485_CH1 = 0,
+  RS485_CH2 = 1
+} RS485_Channel;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define RS232_RX_DATA_LENGTH 35
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -128,7 +138,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  __HAL_DBGMCU_FREEZE_IWDG();
+	__HAL_DBGMCU_FREEZE_WWDG();
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -615,7 +626,88 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void RS232_RxEventCallBack(struct __UART_HandleTypeDef *huart, uint16_t Pos)
+{
+  HAL_UART_RxEventTypeTypeDef event_type = 3;
+  event_type = HAL_UARTEx_GetRxEventType(huart);
+  switch (event_type)
+  {
+  case HAL_UART_RXEVENT_TC:
+    if ((g_rs232_rx_buf[33] & 0x0F) == 0x0C)
+    {
+      uint8_t rs232_xor_result = 0;
+      for (uint8_t i = 1; i < (RS232_RX_DATA_LENGTH - 1); i++)
+      {
+        rs232_xor_result = rs232_xor_result ^ g_rs232_rx_buf[i];
+      }
+      if (rs232_xor_result == g_rs232_rx_buf[34])
+      {
+        if (g_sbus_new_frame_flag == 0)
+        {
+          for (uint8_t i = 0; i < 16; i++)
+          {
+            g_sbus_ch_val[i] = ((uint16_t)g_rs232_rx_buf[2 * i + 1] << 8) | (uint16_t)g_rs232_rx_buf[2 * i + 2];
+          }
+          g_sbus_new_frame_flag = 1;
+					HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
+        }
+      }
+    }
+    g_rs232_status = 0;
+    break;
+  case HAL_UART_RXEVENT_HT:
+    /* code */
+    break;
+  case HAL_UART_RXEVENT_IDLE:
+    g_rs232_status = 0;
+    break;
 
+  default:
+    break;
+  }
+}
+
+void RS485_Status_Set(RS485_Channel ch, RS485_Status status)
+{
+  if (status == RS485_READ)
+  {
+    switch (ch)
+    {
+    case RS485_CH1:
+      HAL_GPIO_WritePin(RS485_1_DE_GPIO_Port, RS485_1_DE_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(RS485_1_RE_GPIO_Port, RS485_1_RE_Pin, GPIO_PIN_RESET);
+      break;
+    case RS485_CH2:
+      HAL_GPIO_WritePin(RS485_2_DE_GPIO_Port, RS485_2_DE_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(RS485_2_RE_GPIO_Port, RS485_2_RE_Pin, GPIO_PIN_RESET);
+      break;
+
+    default:
+      break;
+    }
+  }
+  else if (status == RS485_WRITE)
+  {
+    switch (ch)
+    {
+    case RS485_CH1:
+      HAL_GPIO_WritePin(RS485_1_DE_GPIO_Port, RS485_1_DE_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(RS485_1_RE_GPIO_Port, RS485_1_RE_Pin, GPIO_PIN_SET);
+      break;
+    case RS485_CH2:
+      HAL_GPIO_WritePin(RS485_2_DE_GPIO_Port, RS485_2_DE_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(RS485_2_RE_GPIO_Port, RS485_2_RE_Pin, GPIO_PIN_SET);
+      break;
+
+    default:
+      break;
+    }
+  }
+  else
+  {
+    return;
+  }
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -631,7 +723,8 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    osDelay(500);
+    HAL_GPIO_TogglePin(LED_2_GPIO_Port, LED_2_Pin);
   }
   /* USER CODE END 5 */
 }
@@ -646,10 +739,13 @@ void StartDefaultTask(void *argument)
 void StartTask_WDog(void *argument)
 {
   /* USER CODE BEGIN StartTask_WDog */
+	TickType_t xLastWakeTime;
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    xLastWakeTime = osKernelGetTickCount();
+    osDelayUntil(xLastWakeTime + 300);
+    HAL_IWDG_Refresh(&hiwdg);
   }
   /* USER CODE END StartTask_WDog */
 }
@@ -664,10 +760,24 @@ void StartTask_WDog(void *argument)
 void StartTask_232Rx(void *argument)
 {
   /* USER CODE BEGIN StartTask_232Rx */
+	TickType_t xLastWakeTime;
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    xLastWakeTime = osKernelGetTickCount();
+    osDelayUntil(xLastWakeTime + 5);
+    switch (g_rs232_status)
+    {
+    case 0:
+      if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, (uint8_t *)g_rs232_rx_buf, RS232_RX_DATA_LENGTH) == HAL_OK)
+      {
+        g_rs232_status = 1;
+      }
+      break;
+
+    default:
+      break;
+    }
   }
   /* USER CODE END StartTask_232Rx */
 }

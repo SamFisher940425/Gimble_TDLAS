@@ -20,7 +20,6 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "can.h"
-#include "crc.h"
 #include "dma.h"
 #include "iwdg.h"
 #include "rtc.h"
@@ -30,7 +29,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "CRC16_MODBUS.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,7 +49,6 @@ typedef enum
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define RS232_RX_DATA_LENGTH 9
 #define PELCOD_CMD_LENGTH 7
 #define PELCOD_CMD_TYPE 6
 /* USER CODE END PD */
@@ -65,8 +63,8 @@ typedef enum
 /* USER CODE BEGIN PV */
 volatile uint8_t g_rs232_status = 0;
 volatile uint8_t g_rs232_rx_buf[RS232_RX_DATA_LENGTH] = {0};
-volatile uint16_t g_sbus_ch_val[16] = {0};
-volatile uint8_t g_sbus_new_frame_flag = 0;
+volatile uint32_t g_distance_uint32 = 0; // 0.1mm
+volatile float g_distance_f32 = 0.0F; // mm
 volatile uint8_t g_rs485_tx_buf[PELCOD_CMD_TYPE][PELCOD_CMD_LENGTH] = {0}; // line_0: move, line_1: zoom, line_2: focal, line_3: aperture, line_4: light, line_5: wiper
 volatile uint8_t g_pelcod_status[PELCOD_CMD_TYPE] = {0};
 volatile uint8_t g_pelcod_new_pack_flag = 0;
@@ -122,9 +120,8 @@ int main(void)
   MX_IWDG_Init();
   MX_CAN_Init();
   MX_TIM4_Init();
-  MX_CRC_Init();
   /* USER CODE BEGIN 2 */
-
+	
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -204,25 +201,19 @@ void RS232_RxEventCallBack(struct __UART_HandleTypeDef *huart, uint16_t Pos)
   switch (event_type)
   {
   case HAL_UART_RXEVENT_TC:
-    if ((g_rs232_rx_buf[33] & 0x0F) == 0x0C)
+    if (g_rs232_rx_buf[1] == 0x03 && g_rs232_rx_buf[2] == 0x04)
     {
-      uint8_t rs232_xor_result = 0;
-      for (uint8_t i = 1; i < (RS232_RX_DATA_LENGTH - 1); i++)
-      {
-        rs232_xor_result = rs232_xor_result ^ g_rs232_rx_buf[i];
-      }
-      if (rs232_xor_result == g_rs232_rx_buf[34])
-      {
-        if (g_sbus_new_frame_flag == 0)
-        {
-          for (uint8_t i = 0; i < 16; i++)
-          {
-            g_sbus_ch_val[i] = ((uint16_t)g_rs232_rx_buf[2 * i + 1] << 8) | (uint16_t)g_rs232_rx_buf[2 * i + 2];
-          }
-          g_sbus_new_frame_flag = 1;
-					HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
-        }
-      }
+			uint16_t check = 0;
+			check = crc16_modbus(0xFFFF,(const unsigned char*)g_rs232_rx_buf,7);
+			if((check & 0x00FF) == g_rs232_rx_buf[7] && ((check >> 8) & 0x00FF) == g_rs232_rx_buf[8])
+			{
+				g_distance_uint32 = g_rs232_rx_buf[6];
+				g_distance_uint32 |= (g_rs232_rx_buf[5] << 8);
+				g_distance_uint32 |= (g_rs232_rx_buf[4] << 16);
+				g_distance_uint32 |= (g_rs232_rx_buf[3] << 24);
+				g_distance_f32 = g_distance_uint32 / 10.0F;
+				HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
+			}
     }
     g_rs232_status = 0;
     break;

@@ -41,12 +41,13 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
-
+extern volatile uint8_t g_rs232_status;
+extern volatile uint8_t g_rs232_rx_buf[];
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
-
+#define RS232_RX_DATA_LENGTH 9
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/

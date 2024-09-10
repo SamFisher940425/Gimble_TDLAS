@@ -26,6 +26,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "iwdg.h"
+#include "usart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -204,6 +205,18 @@ void StartTask_232Rx(void *argument)
   {
     xLastWakeTime = osKernelGetTickCount();
     osDelayUntil(xLastWakeTime + 5);
+		switch (g_rs232_status)
+    {
+    case 0:
+      if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, (uint8_t *)g_rs232_rx_buf, RS232_RX_DATA_LENGTH) == HAL_OK)
+      {
+        g_rs232_status = 1;
+      }
+      break;
+
+    default:
+      break;
+    }
   }
   /* USER CODE END StartTask_232Rx */
 }

@@ -34,23 +34,12 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-typedef enum
-{
-  RS485_READ = 0,
-  RS485_WRITE = 1
-} RS485_Status;
 
-typedef enum
-{
-  RS485_CH1 = 0,
-  RS485_CH2 = 1
-} RS485_Channel;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define PELCOD_CMD_LENGTH 7
-#define PELCOD_CMD_TYPE 6
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -61,20 +50,30 @@ typedef enum
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-volatile uint8_t g_rs232_status = 0;
+volatile uint8_t g_rs232_state = 0;
 volatile uint8_t g_rs232_rx_buf[RS232_RX_DATA_LENGTH] = {0};
 volatile uint32_t g_distance_uint32 = 0; // 0.1mm
 volatile float g_distance_f32 = 0.0F; // mm
-volatile uint8_t g_rs485_tx_buf[PELCOD_CMD_TYPE][PELCOD_CMD_LENGTH] = {0}; // line_0: move, line_1: zoom, line_2: focal, line_3: aperture, line_4: light, line_5: wiper
-volatile uint8_t g_pelcod_status[PELCOD_CMD_TYPE] = {0};
-volatile uint8_t g_pelcod_new_pack_flag = 0;
+volatile uint8_t g_rs485_c1_state = 0;
+volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH] = {0};
+volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH] = {0};
+volatile uint8_t g_rs485_c2_state = 0;
+volatile uint8_t g_rs485_c2_tx_cnt = 0;
+volatile uint8_t g_rs485_c2_rx_cnt = 0;
+volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH] = {0};
+volatile uint8_t g_rs485_c2_rx_buf[RS485_C2_RX_DATA_LENGTH] = {0};
+volatile uint16_t g_tdlas_ppm = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
-
+void RS232_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos);
+void RS485_C1_TxCpltCallback(UART_HandleTypeDef *huart);
+void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos);
+void RS485_C2_TxCpltCallback(UART_HandleTypeDef *huart);
+void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -121,7 +120,13 @@ int main(void)
   MX_CAN_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-	
+	HAL_UART_RegisterRxEventCallback(&huart1, RS232_RxEventCallBack);
+	HAL_UART_RegisterCallback(&huart3,HAL_UART_TX_COMPLETE_CB_ID,RS485_C1_TxCpltCallback);
+	HAL_UART_RegisterRxEventCallback(&huart2, RS485_C1_RxEventCallBack);
+	HAL_UART_RegisterCallback(&huart2,HAL_UART_TX_COMPLETE_CB_ID,RS485_C2_TxCpltCallback);
+	HAL_UART_RegisterRxEventCallback(&huart2, RS485_C2_RxEventCallBack);
+  RS485_Status_Set(RS485_CH1, RS485_READ);
+	RS485_Status_Set(RS485_CH2, RS485_WRITE);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -194,7 +199,7 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-void RS232_RxEventCallBack(struct __UART_HandleTypeDef *huart, uint16_t Pos)
+void RS232_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
 {
   HAL_UART_RxEventTypeTypeDef event_type = 3; // set a invalid value temp
   event_type = HAL_UARTEx_GetRxEventType(huart);
@@ -204,24 +209,82 @@ void RS232_RxEventCallBack(struct __UART_HandleTypeDef *huart, uint16_t Pos)
     if (g_rs232_rx_buf[1] == 0x03 && g_rs232_rx_buf[2] == 0x04)
     {
 			uint16_t check = 0;
-			check = crc16_modbus(0xFFFF,(const unsigned char*)g_rs232_rx_buf,7);
-			if((check & 0x00FF) == g_rs232_rx_buf[7] && ((check >> 8) & 0x00FF) == g_rs232_rx_buf[8])
+			check = crc16_modbus(0xFFFF,(const unsigned char*)g_rs232_rx_buf,RS232_RX_DATA_LENGTH-2);
+			if((check & 0x00FF) == g_rs232_rx_buf[RS232_RX_DATA_LENGTH-2] && ((check >> 8) & 0x00FF) == g_rs232_rx_buf[RS232_RX_DATA_LENGTH-1])
 			{
-				g_distance_uint32 = g_rs232_rx_buf[6];
-				g_distance_uint32 |= (g_rs232_rx_buf[5] << 8);
-				g_distance_uint32 |= (g_rs232_rx_buf[4] << 16);
-				g_distance_uint32 |= (g_rs232_rx_buf[3] << 24);
-				g_distance_f32 = g_distance_uint32 / 10.0F;
 				HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
+				g_rs232_state = 2;
+			}
+			else
+			{
+				g_rs232_state = 0;
 			}
     }
-    g_rs232_status = 0;
+		else
+		{
+			g_rs232_state = 0;
+		}
     break;
   case HAL_UART_RXEVENT_HT:
     /* code */
     break;
   case HAL_UART_RXEVENT_IDLE:
-    g_rs232_status = 0;
+    g_rs232_state = 0;
+    break;
+
+  default:
+    break;
+  }
+}
+
+void RS485_C1_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+}
+
+void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
+{
+}
+
+void RS485_C2_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+	RS485_Status_Set(RS485_CH2, RS485_READ);
+	if(HAL_UARTEx_ReceiveToIdle_DMA(&huart2, (uint8_t *)g_rs485_c2_rx_buf, g_rs485_c2_rx_cnt) == HAL_OK)
+	{
+		g_rs485_c2_state = 2;
+	}
+}
+
+void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
+{
+	HAL_UART_RxEventTypeTypeDef event_type = 3; // set a invalid value temp
+  event_type = HAL_UARTEx_GetRxEventType(huart);
+	switch (event_type)
+  {
+  case HAL_UART_RXEVENT_TC:
+		if (g_rs485_c2_rx_buf[1] == 0x03 && g_rs485_c2_rx_buf[2] == 0x02)
+		{
+			uint16_t check = 0;
+			check = crc16_modbus(0xFFFF,(const unsigned char*)g_rs485_c2_rx_buf,g_rs485_c2_rx_cnt-2);
+			if((check & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_cnt-2] && ((check >> 8) & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_cnt-1])
+			{
+				HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
+				g_rs485_c2_state = 3;
+			}
+			else
+			{
+				g_rs485_c2_state = 0;
+			}
+		}
+		else
+		{
+			g_rs485_c2_state = 0;
+		}
+    break;
+  case HAL_UART_RXEVENT_HT:
+    /* code */
+    break;
+  case HAL_UART_RXEVENT_IDLE:
+    g_rs485_c2_state = 0;
     break;
 
   default:

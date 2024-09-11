@@ -46,7 +46,19 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-
+extern volatile uint8_t g_rs232_state;
+extern volatile uint8_t g_rs232_rx_buf[RS232_RX_DATA_LENGTH];
+extern volatile uint32_t g_distance_uint32; // 0.1mm
+extern volatile float g_distance_f32; // mm
+extern volatile uint8_t g_rs485_c1_state;
+extern volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH];
+extern volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH];
+extern volatile uint8_t g_rs485_c2_state;
+extern volatile uint8_t g_rs485_c2_tx_cnt;
+extern volatile uint8_t g_rs485_c2_rx_cnt;
+extern volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH];
+extern volatile uint8_t g_rs485_c2_rx_buf[RS485_C2_RX_DATA_LENGTH];
+extern volatile uint16_t g_tdlas_ppm;
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -67,14 +79,21 @@ osThreadId_t myTask_232RxHandle;
 const osThreadAttr_t myTask_232Rx_attributes = {
   .name = "myTask_232Rx",
   .stack_size = 64 * 4,
-  .priority = (osPriority_t) osPriorityHigh,
+  .priority = (osPriority_t) osPriorityHigh1,
 };
-/* Definitions for myTask_485C1Tx */
-osThreadId_t myTask_485C1TxHandle;
-const osThreadAttr_t myTask_485C1Tx_attributes = {
-  .name = "myTask_485C1Tx",
+/* Definitions for myTask_485C1TR */
+osThreadId_t myTask_485C1TRHandle;
+const osThreadAttr_t myTask_485C1TR_attributes = {
+  .name = "myTask_485C1TR",
   .stack_size = 64 * 4,
-  .priority = (osPriority_t) osPriorityBelowNormal,
+  .priority = (osPriority_t) osPriorityHigh2,
+};
+/* Definitions for myTask_485C2TR */
+osThreadId_t myTask_485C2TRHandle;
+const osThreadAttr_t myTask_485C2TR_attributes = {
+  .name = "myTask_485C2TR",
+  .stack_size = 64 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for myTask_WorkFlow */
 osThreadId_t myTask_WorkFlowHandle;
@@ -92,7 +111,8 @@ const osThreadAttr_t myTask_WorkFlow_attributes = {
 void StartDefaultTask(void *argument);
 void StartTask_WDog(void *argument);
 void StartTask_232Rx(void *argument);
-void StartTask_485C1Tx(void *argument);
+void StartTask_485C1TR(void *argument);
+void StartTask_485C2TR(void *argument);
 void StartTask_WorkFlow(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
@@ -133,8 +153,11 @@ void MX_FREERTOS_Init(void) {
   /* creation of myTask_232Rx */
   myTask_232RxHandle = osThreadNew(StartTask_232Rx, NULL, &myTask_232Rx_attributes);
 
-  /* creation of myTask_485C1Tx */
-  myTask_485C1TxHandle = osThreadNew(StartTask_485C1Tx, NULL, &myTask_485C1Tx_attributes);
+  /* creation of myTask_485C1TR */
+  myTask_485C1TRHandle = osThreadNew(StartTask_485C1TR, NULL, &myTask_485C1TR_attributes);
+
+  /* creation of myTask_485C2TR */
+  myTask_485C2TRHandle = osThreadNew(StartTask_485C2TR, NULL, &myTask_485C2TR_attributes);
 
   /* creation of myTask_WorkFlow */
   myTask_WorkFlowHandle = osThreadNew(StartTask_WorkFlow, NULL, &myTask_WorkFlow_attributes);
@@ -205,38 +228,73 @@ void StartTask_232Rx(void *argument)
   {
     xLastWakeTime = osKernelGetTickCount();
     osDelayUntil(xLastWakeTime + 5);
-		switch (g_rs232_status)
-    {
-    case 0:
-      if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, (uint8_t *)g_rs232_rx_buf, RS232_RX_DATA_LENGTH) == HAL_OK)
+		if(0 == g_rs232_state)
+		{
+      if(HAL_UARTEx_ReceiveToIdle_DMA(&huart1, (uint8_t *)g_rs232_rx_buf, RS232_RX_DATA_LENGTH) == HAL_OK)
       {
-        g_rs232_status = 1;
+        g_rs232_state = 1;
       }
-      break;
-
-    default:
-      break;
-    }
+		}
   }
   /* USER CODE END StartTask_232Rx */
 }
 
-/* USER CODE BEGIN Header_StartTask_485C1Tx */
+/* USER CODE BEGIN Header_StartTask_485C1TR */
 /**
-* @brief Function implementing the myTask_485C1Tx thread.
+* @brief Function implementing the myTask_485C1TR thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartTask_485C1Tx */
-void StartTask_485C1Tx(void *argument)
+/* USER CODE END Header_StartTask_485C1TR */
+void StartTask_485C1TR(void *argument)
 {
-  /* USER CODE BEGIN StartTask_485C1Tx */
+  /* USER CODE BEGIN StartTask_485C1TR */
+	TickType_t xLastWakeTime;
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    xLastWakeTime = osKernelGetTickCount();
+    osDelayUntil(xLastWakeTime + 5);
+		if(HAL_UARTEx_ReceiveToIdle_DMA(&huart3, (uint8_t *)g_rs485_c1_rx_buf, RS485_C1_RX_DATA_LENGTH) == HAL_OK)
+		{
+			g_rs485_c1_state = 1;
+		}
   }
-  /* USER CODE END StartTask_485C1Tx */
+  /* USER CODE END StartTask_485C1TR */
+}
+
+/* USER CODE BEGIN Header_StartTask_485C2TR */
+/**
+* @brief Function implementing the myTask_485C2TR thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask_485C2TR */
+void StartTask_485C2TR(void *argument)
+{
+  /* USER CODE BEGIN StartTask_485C2TR */
+	TickType_t xLastWakeTime;
+  /* Infinite loop */
+  for(;;)
+  {
+    xLastWakeTime = osKernelGetTickCount();
+    osDelayUntil(xLastWakeTime + 1000);
+		RS485_Status_Set(RS485_CH2, RS485_WRITE);
+		osDelay(1);
+		g_rs485_c2_tx_cnt = 8;
+		g_rs485_c2_rx_cnt = 7;
+		g_rs485_c2_tx_buf[0] = 0x01;
+		g_rs485_c2_tx_buf[1] = 0x03;
+		g_rs485_c2_tx_buf[2] = 0x00;
+		g_rs485_c2_tx_buf[3] = 0x01;
+		g_rs485_c2_tx_buf[4] = 0x00;
+		g_rs485_c2_tx_buf[5] = 0x01;
+		g_rs485_c2_tx_buf[6] = 0xD5;
+		g_rs485_c2_tx_buf[7] = 0xCA;
+		HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&g_rs485_c2_tx_buf, g_rs485_c2_tx_cnt);
+		g_rs485_c2_state = 1;
+  }
+  /* USER CODE END StartTask_485C2TR */
 }
 
 /* USER CODE BEGIN Header_StartTask_WorkFlow */
@@ -253,6 +311,23 @@ void StartTask_WorkFlow(void *argument)
   for(;;)
   {
     osDelay(1);
+		
+		if(2 == g_rs232_state)
+		{
+			g_distance_uint32 = g_rs232_rx_buf[6];
+			g_distance_uint32 |= (g_rs232_rx_buf[5] << 8);
+			g_distance_uint32 |= (g_rs232_rx_buf[4] << 16);
+			g_distance_uint32 |= (g_rs232_rx_buf[3] << 24);
+			g_distance_f32 = g_distance_uint32 / 10.0F;
+			g_rs232_state = 0;
+		}
+		
+		if(3 == g_rs485_c2_state)
+		{
+			g_tdlas_ppm = g_rs485_c2_rx_buf[4];
+			g_tdlas_ppm |= (g_rs485_c2_rx_buf[3] << 8);
+			g_rs485_c2_state = 0;
+		}
   }
   /* USER CODE END StartTask_WorkFlow */
 }

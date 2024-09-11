@@ -36,25 +36,38 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
+typedef enum
+{
+  RS485_READ = 0,
+  RS485_WRITE = 1
+} RS485_Status;
 
+typedef enum
+{
+  RS485_CH1 = 0,
+  RS485_CH2 = 1
+} RS485_Channel;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
-extern volatile uint8_t g_rs232_status;
-extern volatile uint8_t g_rs232_rx_buf[];
+
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
 #define RS232_RX_DATA_LENGTH 9
+#define RS485_C1_TX_DATA_LENGTH 32
+#define RS485_C1_RX_DATA_LENGTH 32
+#define RS485_C2_TX_DATA_LENGTH 16
+#define RS485_C2_RX_DATA_LENGTH 16
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
+void RS485_Status_Set(RS485_Channel ch, RS485_Status status);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

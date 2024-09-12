@@ -1,20 +1,20 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2024 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2024 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -53,7 +53,7 @@
 volatile uint8_t g_rs232_state = 0;
 volatile uint8_t g_rs232_rx_buf[RS232_RX_DATA_LENGTH] = {0};
 volatile uint32_t g_distance_uint32 = 0; // 0.1mm
-volatile float g_distance_f32 = 0.0F; // mm
+volatile float g_distance_f32 = 0.0F;    // mm
 volatile uint8_t g_rs485_c1_state = 0;
 volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH] = {0};
 volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH] = {0};
@@ -63,6 +63,10 @@ volatile uint8_t g_rs485_c2_rx_cnt = 0;
 volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH] = {0};
 volatile uint8_t g_rs485_c2_rx_buf[RS485_C2_RX_DATA_LENGTH] = {0};
 volatile uint16_t g_tdlas_ppm = 0;
+CAN_TxHeaderTypeDef g_can_tx_message_head;
+volatile uint8_t g_can_tx_data[8] = {0};
+CAN_RxHeaderTypeDef g_can_rx_message_head;
+volatile uint8_t g_can_rx_data[8] = {0};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,6 +78,8 @@ void RS485_C1_TxCpltCallback(UART_HandleTypeDef *huart);
 void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos);
 void RS485_C2_TxCpltCallback(UART_HandleTypeDef *huart);
 void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos);
+void CAN_Filter_Config(void);
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -90,7 +96,7 @@ int main(void)
 
   /* USER CODE BEGIN 1 */
   __HAL_DBGMCU_FREEZE_IWDG();
-	__HAL_DBGMCU_FREEZE_WWDG();
+  __HAL_DBGMCU_FREEZE_WWDG();
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -120,13 +126,17 @@ int main(void)
   MX_CAN_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-	HAL_UART_RegisterRxEventCallback(&huart1, RS232_RxEventCallBack);
-	HAL_UART_RegisterCallback(&huart3,HAL_UART_TX_COMPLETE_CB_ID,RS485_C1_TxCpltCallback);
-	HAL_UART_RegisterRxEventCallback(&huart2, RS485_C1_RxEventCallBack);
-	HAL_UART_RegisterCallback(&huart2,HAL_UART_TX_COMPLETE_CB_ID,RS485_C2_TxCpltCallback);
-	HAL_UART_RegisterRxEventCallback(&huart2, RS485_C2_RxEventCallBack);
+  HAL_UART_RegisterRxEventCallback(&huart1, RS232_RxEventCallBack);
+  HAL_UART_RegisterCallback(&huart3, HAL_UART_TX_COMPLETE_CB_ID, RS485_C1_TxCpltCallback);
+  HAL_UART_RegisterRxEventCallback(&huart2, RS485_C1_RxEventCallBack);
+  HAL_UART_RegisterCallback(&huart2, HAL_UART_TX_COMPLETE_CB_ID, RS485_C2_TxCpltCallback);
+  HAL_UART_RegisterRxEventCallback(&huart2, RS485_C2_RxEventCallBack);
   RS485_Status_Set(RS485_CH1, RS485_READ);
-	RS485_Status_Set(RS485_CH2, RS485_WRITE);
+  RS485_Status_Set(RS485_CH2, RS485_WRITE);
+  CAN_Filter_Config();
+  HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
+  HAL_CAN_Start(&hcan);
+  HAL_CAN_RegisterCallback(&hcan, HAL_CAN_RX_FIFO0_MSG_PENDING_CB_ID, HAL_CAN_RxFifo0MsgPendingCallback);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -208,22 +218,22 @@ void RS232_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
   case HAL_UART_RXEVENT_TC:
     if (g_rs232_rx_buf[1] == 0x03 && g_rs232_rx_buf[2] == 0x04)
     {
-			uint16_t check = 0;
-			check = crc16_modbus(0xFFFF,(const unsigned char*)g_rs232_rx_buf,RS232_RX_DATA_LENGTH-2);
-			if((check & 0x00FF) == g_rs232_rx_buf[RS232_RX_DATA_LENGTH-2] && ((check >> 8) & 0x00FF) == g_rs232_rx_buf[RS232_RX_DATA_LENGTH-1])
-			{
-				HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
-				g_rs232_state = 2;
-			}
-			else
-			{
-				g_rs232_state = 0;
-			}
+      uint16_t check = 0;
+      check = crc16_modbus(0xFFFF, (const unsigned char *)g_rs232_rx_buf, RS232_RX_DATA_LENGTH - 2);
+      if ((check & 0x00FF) == g_rs232_rx_buf[RS232_RX_DATA_LENGTH - 2] && ((check >> 8) & 0x00FF) == g_rs232_rx_buf[RS232_RX_DATA_LENGTH - 1])
+      {
+        HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
+        g_rs232_state = 2;
+      }
+      else
+      {
+        g_rs232_state = 0;
+      }
     }
-		else
-		{
-			g_rs232_state = 0;
-		}
+    else
+    {
+      g_rs232_state = 0;
+    }
     break;
   case HAL_UART_RXEVENT_HT:
     /* code */
@@ -247,38 +257,38 @@ void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
 
 void RS485_C2_TxCpltCallback(UART_HandleTypeDef *huart)
 {
-	RS485_Status_Set(RS485_CH2, RS485_READ);
-	if(HAL_UARTEx_ReceiveToIdle_DMA(&huart2, (uint8_t *)g_rs485_c2_rx_buf, g_rs485_c2_rx_cnt) == HAL_OK)
-	{
-		g_rs485_c2_state = 2;
-	}
+  RS485_Status_Set(RS485_CH2, RS485_READ);
+  if (HAL_UARTEx_ReceiveToIdle_DMA(&huart2, (uint8_t *)g_rs485_c2_rx_buf, g_rs485_c2_rx_cnt) == HAL_OK)
+  {
+    g_rs485_c2_state = 2;
+  }
 }
 
 void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
 {
-	HAL_UART_RxEventTypeTypeDef event_type = 3; // set a invalid value temp
+  HAL_UART_RxEventTypeTypeDef event_type = 3; // set a invalid value temp
   event_type = HAL_UARTEx_GetRxEventType(huart);
-	switch (event_type)
+  switch (event_type)
   {
   case HAL_UART_RXEVENT_TC:
-		if (g_rs485_c2_rx_buf[1] == 0x03 && g_rs485_c2_rx_buf[2] == 0x02)
-		{
-			uint16_t check = 0;
-			check = crc16_modbus(0xFFFF,(const unsigned char*)g_rs485_c2_rx_buf,g_rs485_c2_rx_cnt-2);
-			if((check & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_cnt-2] && ((check >> 8) & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_cnt-1])
-			{
-				HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
-				g_rs485_c2_state = 3;
-			}
-			else
-			{
-				g_rs485_c2_state = 0;
-			}
-		}
-		else
-		{
-			g_rs485_c2_state = 0;
-		}
+    if (g_rs485_c2_rx_buf[1] == 0x03 && g_rs485_c2_rx_buf[2] == 0x02)
+    {
+      uint16_t check = 0;
+      check = crc16_modbus(0xFFFF, (const unsigned char *)g_rs485_c2_rx_buf, g_rs485_c2_rx_cnt - 2);
+      if ((check & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_cnt - 2] && ((check >> 8) & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_cnt - 1])
+      {
+        HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
+        g_rs485_c2_state = 3;
+      }
+      else
+      {
+        g_rs485_c2_state = 0;
+      }
+    }
+    else
+    {
+      g_rs485_c2_state = 0;
+    }
     break;
   case HAL_UART_RXEVENT_HT:
     /* code */
@@ -331,6 +341,38 @@ void RS485_Status_Set(RS485_Channel ch, RS485_Status status)
   else
   {
     return;
+  }
+}
+
+void CAN_Filter_Config(void)
+{
+  CAN_FilterTypeDef sFilterConfig;
+  sFilterConfig.FilterBank = 0;
+  sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
+  sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
+  sFilterConfig.FilterIdHigh = 0x0000;
+  sFilterConfig.FilterIdLow = 0x0000;
+  sFilterConfig.FilterMaskIdHigh = 0x0000;
+  sFilterConfig.FilterMaskIdLow = 0x0000;
+  sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
+  sFilterConfig.FilterActivation = ENABLE;
+  sFilterConfig.SlaveStartFilterBank = 14;
+
+  if (HAL_CAN_ConfigFilter(&hcan, &sFilterConfig) != HAL_OK)
+  {
+    /* Filter configuration Error */
+    Error_Handler();
+  }
+}
+
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+  HAL_StatusTypeDef status = HAL_TIMEOUT;
+
+  status = HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &g_can_rx_message_head, (uint8_t *)g_can_rx_data);
+  if(status == HAL_OK)
+  {
+    
   }
 }
 /* USER CODE END 4 */

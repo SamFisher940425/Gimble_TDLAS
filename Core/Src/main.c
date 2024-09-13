@@ -65,16 +65,12 @@ volatile uint8_t g_rs485_c2_tx_len = 0;
 volatile uint8_t g_rs485_c2_rx_len = 0;
 volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH] = {0};
 volatile uint8_t g_rs485_c2_rx_buf[RS485_C2_RX_DATA_LENGTH] = {0};
-volatile uint32_t g_tdlas_ppm = 0;
 
 CAN_TxHeaderTypeDef g_can_tx_message_head;
 volatile uint8_t g_can_tx_data[8] = {0};
 CAN_RxHeaderTypeDef g_can_rx_message_head;
 volatile uint8_t g_can_rx_data[8] = {0};
 
-volatile uint16_t g_pwm_min = 1000;
-volatile uint16_t g_pwm_mid = 1500;
-volatile uint16_t g_pwm_max = 2000;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -269,10 +265,7 @@ void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
 void RS485_C2_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   RS485_Status_Set(RS485_CH2, RS485_READ);
-  if (HAL_UARTEx_ReceiveToIdle_DMA(huart, (uint8_t *)g_rs485_c2_rx_buf, g_rs485_c2_rx_len) == HAL_OK)
-  {
-    g_rs485_c2_state = 2;
-  }
+  HAL_UARTEx_ReceiveToIdle_DMA(huart, (uint8_t *)g_rs485_c2_rx_buf, RS485_C2_RX_DATA_LENGTH);
 }
 
 void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)

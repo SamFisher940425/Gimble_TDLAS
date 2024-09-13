@@ -65,16 +65,18 @@ extern volatile uint8_t g_rs485_c2_tx_len;
 extern volatile uint8_t g_rs485_c2_rx_len;
 extern volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH];
 extern volatile uint8_t g_rs485_c2_rx_buf[RS485_C2_RX_DATA_LENGTH];
-extern volatile uint32_t g_tdlas_ppm;
+volatile uint32_t g_tdlas_ppm = 0;
 
 extern CAN_TxHeaderTypeDef g_can_tx_message_head;
 extern volatile uint8_t g_can_tx_data[8];
 extern CAN_RxHeaderTypeDef g_can_rx_message_head;
 extern volatile uint8_t g_can_rx_data[8];
 
-extern volatile uint16_t g_pwm_min;
-extern volatile uint16_t g_pwm_mid;
-extern volatile uint16_t g_pwm_max;
+volatile uint16_t g_pwm_min = 1000;
+volatile uint16_t g_pwm_mid = 1500;
+volatile uint16_t g_pwm_max = 2000;
+volatile uint8_t g_pwm_flag = 0; // 0 stop 1 active once 2 open 255 fixing mode
+
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -312,25 +314,52 @@ void StartTask_485C2TR(void *argument)
 {
   /* USER CODE BEGIN StartTask_485C2TR */
   TickType_t xLastWakeTime;
+  TDLAS_Tx_Msg tdlas_tx_msg_temp;
+  uint16_t check = 0;
   /* Infinite loop */
   for (;;)
   {
     xLastWakeTime = osKernelGetTickCount();
-    osDelayUntil(xLastWakeTime + 10);
-    RS485_Status_Set(RS485_CH2, RS485_WRITE);
-    osDelay(1);
-    g_rs485_c2_tx_len = 8;
-    g_rs485_c2_rx_len = 7;
-    g_rs485_c2_tx_buf[0] = 0x01;
-    g_rs485_c2_tx_buf[1] = 0x03;
-    g_rs485_c2_tx_buf[2] = 0x00;
-    g_rs485_c2_tx_buf[3] = 0x01;
-    g_rs485_c2_tx_buf[4] = 0x00;
-    g_rs485_c2_tx_buf[5] = 0x01;
-    g_rs485_c2_tx_buf[6] = 0xD5;
-    g_rs485_c2_tx_buf[7] = 0xCA;
-    HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&g_rs485_c2_tx_buf, g_rs485_c2_tx_len);
-    g_rs485_c2_state = 1;
+    osDelayUntil(xLastWakeTime + 5);
+    if (0 == TDLAS_Tx_Msg_Get(&tdlas_tx_msg_temp))
+    {
+      RS485_Status_Set(RS485_CH2, RS485_WRITE);
+      osDelay(1);
+      if (0x03 == tdlas_tx_msg_temp.func_code)
+      {
+        g_rs485_c2_tx_len = 8;
+        g_rs485_c2_tx_buf[0] = tdlas_tx_msg_temp.addr;
+        g_rs485_c2_tx_buf[1] = tdlas_tx_msg_temp.func_code;
+        g_rs485_c2_tx_buf[2] = (tdlas_tx_msg_temp.reg_addr >> 8) & 0x00FF;
+        g_rs485_c2_tx_buf[3] = tdlas_tx_msg_temp.reg_addr & 0x00FF;
+        g_rs485_c2_tx_buf[4] = (tdlas_tx_msg_temp.reg_cnt >> 8) & 0x00FF;
+        g_rs485_c2_tx_buf[5] = tdlas_tx_msg_temp.reg_cnt & 0x00FF;
+        check = crc16_modbus(0xFFFF, (const unsigned char *)&g_rs485_c2_tx_buf, g_rs485_c2_tx_len - 2);
+        tdlas_tx_msg_temp.crc_l = check & 0x00FF;
+        tdlas_tx_msg_temp.crc_h = (check >> 8) & 0x00FF;
+        g_rs485_c2_tx_buf[6] = tdlas_tx_msg_temp.crc_l;
+        g_rs485_c2_tx_buf[7] = tdlas_tx_msg_temp.crc_h;
+      }
+      else if (0x10 == tdlas_tx_msg_temp.func_code)
+      {
+        g_rs485_c2_tx_len = 11;
+        g_rs485_c2_tx_buf[0] = tdlas_tx_msg_temp.addr;
+        g_rs485_c2_tx_buf[1] = tdlas_tx_msg_temp.func_code;
+        g_rs485_c2_tx_buf[2] = (tdlas_tx_msg_temp.reg_addr >> 8) & 0x00FF;
+        g_rs485_c2_tx_buf[3] = tdlas_tx_msg_temp.reg_addr & 0x00FF;
+        g_rs485_c2_tx_buf[4] = (tdlas_tx_msg_temp.reg_cnt >> 8) & 0x00FF;
+        g_rs485_c2_tx_buf[5] = tdlas_tx_msg_temp.reg_cnt & 0x00FF;
+        g_rs485_c2_tx_buf[6] = tdlas_tx_msg_temp.data_len;
+        g_rs485_c2_tx_buf[7] = tdlas_tx_msg_temp.data[0];
+        g_rs485_c2_tx_buf[8] = tdlas_tx_msg_temp.data[1];
+        check = crc16_modbus(0xFFFF, (const unsigned char *)&g_rs485_c2_tx_buf, g_rs485_c2_tx_len - 2);
+        tdlas_tx_msg_temp.crc_l = check & 0x00FF;
+        tdlas_tx_msg_temp.crc_h = (check >> 8) & 0x00FF;
+        g_rs485_c2_tx_buf[6] = tdlas_tx_msg_temp.crc_l;
+        g_rs485_c2_tx_buf[7] = tdlas_tx_msg_temp.crc_h;
+      }
+      HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&g_rs485_c2_tx_buf, g_rs485_c2_tx_len);
+    }
   }
   /* USER CODE END StartTask_485C2TR */
 }
@@ -374,34 +403,41 @@ void StartTask_WorkFlow(void *argument)
 {
   /* USER CODE BEGIN StartTask_WorkFlow */
   TickType_t xLastWakeTime;
-  Rangefinder_Msg msg_temp;
+  uint16_t period_cnt = 0;
+  Rangefinder_Msg range_msg_temp;
+  TDLAS_Tx_Msg tdlas_tx_msg_temp;
+  uint16_t check = 0;
   /* Infinite loop */
   for (;;)
   {
     xLastWakeTime = osKernelGetTickCount();
     osDelayUntil(xLastWakeTime + 5);
+    period_cnt++;
 
-    if (0 == Rangerfinder_Msg_Get(&msg_temp))
+    if (0 == Rangerfinder_Msg_Get(&range_msg_temp))
     {
-      if (0x03 == msg_temp.func_code && 0x04 == msg_temp.data_len)
+      if (0x03 == range_msg_temp.func_code && 0x04 == range_msg_temp.data_len)
       {
-        uint16_t check = 0;
-        check = crc16_modbus(0xFFFF, (const unsigned char *)&msg_temp, RS232_RX_DATA_LENGTH - 2);
-        if ((check & 0x00FF) == msg_temp.crc_l && ((check >> 8) & 0x00FF) == msg_temp.crc_h)
+        check = crc16_modbus(0xFFFF, (const unsigned char *)&range_msg_temp, RS232_RX_DATA_LENGTH - 2);
+        if ((check & 0x00FF) == range_msg_temp.crc_l && ((check >> 8) & 0x00FF) == range_msg_temp.crc_h)
         {
-          g_distance = msg_temp.data[3];
-          g_distance |= (msg_temp.data[2] << 8);
-          g_distance |= (msg_temp.data[1] << 16);
-          g_distance |= (msg_temp.data[0] << 24);
+          g_distance = range_msg_temp.data[3];
+          g_distance |= (range_msg_temp.data[2] << 8);
+          g_distance |= (range_msg_temp.data[1] << 16);
+          g_distance |= (range_msg_temp.data[0] << 24);
         }
       }
     }
 
-    if (3 == g_rs485_c2_state)
+    if (period_cnt % 200 == 0) // 
     {
-      g_tdlas_ppm = g_rs485_c2_rx_buf[4];
-      g_tdlas_ppm |= (g_rs485_c2_rx_buf[3] << 8);
-      g_rs485_c2_state = 0;
+      tdlas_tx_msg_temp.addr = 0x01;
+      tdlas_tx_msg_temp.func_code = 0x03;
+      tdlas_tx_msg_temp.reg_addr = 0x0001;
+      tdlas_tx_msg_temp.reg_cnt = 0x0002;
+      tdlas_tx_msg_temp.crc_l = 0x95;
+      tdlas_tx_msg_temp.crc_h = 0xCB;
+      TDLAS_Tx_Msg_Add(&tdlas_tx_msg_temp);
     }
   }
   /* USER CODE END StartTask_WorkFlow */
@@ -417,7 +453,6 @@ void StartTask_WorkFlow(void *argument)
 void StartTask_PWM(void *argument)
 {
   /* USER CODE BEGIN StartTask_PWM */
-  uint8_t step = 0;
   TIM_OC_InitTypeDef config;
   config.OCMode = TIM_OCFAST_ENABLE;
   config.Pulse = g_pwm_mid;
@@ -429,14 +464,43 @@ void StartTask_PWM(void *argument)
   /* Infinite loop */
   for (;;)
   {
-    osDelay(1000);
-    HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
-    osDelay(1000);
-    config.Pulse = g_pwm_max;
-    HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
-    osDelay(1000);
-    config.Pulse = g_pwm_min;
-    HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+    osDelay(10);
+    switch (g_pwm_flag)
+    {
+    case 0:
+      if (g_pwm_min != config.Pulse)
+      {
+        config.Pulse = g_pwm_min;
+        HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+      }
+      break;
+    case 1: // active once
+      config.Pulse = g_pwm_max;
+      HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+      osDelay(500);
+      config.Pulse = g_pwm_min;
+      HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+      g_pwm_flag = 0;
+      break;
+    case 2: // open
+      config.Pulse = g_pwm_max;
+      HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+      osDelay(500);
+      config.Pulse = g_pwm_min;
+      HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+      osDelay(1000);
+      break;
+    case 255: // fixing mode
+      if (g_pwm_mid != config.Pulse)
+      {
+        config.Pulse = g_pwm_mid;
+        HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+      }
+      break;
+
+    default:
+      break;
+    }
   }
   /* USER CODE END StartTask_PWM */
 }

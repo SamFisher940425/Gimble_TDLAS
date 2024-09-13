@@ -13,6 +13,8 @@ extern "C"
 {
 #endif
 
+#include "main.h"
+
     unsigned short crc16_modbus(unsigned short crc, const unsigned char *buf, unsigned int len);
 
 #ifdef __cplusplus

@@ -28,6 +28,9 @@
 #include "iwdg.h"
 #include "usart.h"
 #include "can.h"
+#include "tim.h"
+#include "CRC16_MODBUS.h"
+#include "msg_list.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,23 +50,31 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-extern volatile uint8_t g_rs232_state;
+extern volatile uint8_t g_rs232_rx_state;
 extern volatile uint8_t g_rs232_rx_buf[RS232_RX_DATA_LENGTH];
-extern volatile uint32_t g_distance_uint32; // 0.1mm
-extern volatile float g_distance_f32;       // mm
+volatile uint32_t g_distance = 0; // 0.1mm
+
 extern volatile uint8_t g_rs485_c1_state;
+extern volatile uint8_t g_rs485_c1_tx_len;
+extern volatile uint8_t g_rs485_c1_rx_len;
 extern volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH];
 extern volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH];
+
 extern volatile uint8_t g_rs485_c2_state;
-extern volatile uint8_t g_rs485_c2_tx_cnt;
-extern volatile uint8_t g_rs485_c2_rx_cnt;
+extern volatile uint8_t g_rs485_c2_tx_len;
+extern volatile uint8_t g_rs485_c2_rx_len;
 extern volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH];
 extern volatile uint8_t g_rs485_c2_rx_buf[RS485_C2_RX_DATA_LENGTH];
-extern volatile uint16_t g_tdlas_ppm;
+extern volatile uint32_t g_tdlas_ppm;
+
 extern CAN_TxHeaderTypeDef g_can_tx_message_head;
 extern volatile uint8_t g_can_tx_data[8];
 extern CAN_RxHeaderTypeDef g_can_rx_message_head;
 extern volatile uint8_t g_can_rx_data[8];
+
+extern volatile uint16_t g_pwm_min;
+extern volatile uint16_t g_pwm_mid;
+extern volatile uint16_t g_pwm_max;
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -114,6 +125,13 @@ const osThreadAttr_t myTask_WorkFlow_attributes = {
     .stack_size = 64 * 4,
     .priority = (osPriority_t)osPriorityNormal,
 };
+/* Definitions for myTask_PWM */
+osThreadId_t myTask_PWMHandle;
+const osThreadAttr_t myTask_PWM_attributes = {
+    .name = "myTask_PWM",
+    .stack_size = 64 * 4,
+    .priority = (osPriority_t)osPriorityBelowNormal,
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -127,6 +145,7 @@ void StartTask_485C1TR(void *argument);
 void StartTask_485C2TR(void *argument);
 void StartTask_CAN(void *argument);
 void StartTask_WorkFlow(void *argument);
+void StartTask_PWM(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -178,6 +197,9 @@ void MX_FREERTOS_Init(void)
 
   /* creation of myTask_WorkFlow */
   myTask_WorkFlowHandle = osThreadNew(StartTask_WorkFlow, NULL, &myTask_WorkFlow_attributes);
+
+  /* creation of myTask_PWM */
+  myTask_PWMHandle = osThreadNew(StartTask_PWM, NULL, &myTask_PWM_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -243,12 +265,12 @@ void StartTask_232Rx(void *argument)
   for (;;)
   {
     xLastWakeTime = osKernelGetTickCount();
-    osDelayUntil(xLastWakeTime + 5);
-    if (0 == g_rs232_state)
+    osDelayUntil(xLastWakeTime + 20);
+    if (0 == g_rs232_rx_state)
     {
       if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, (uint8_t *)g_rs232_rx_buf, RS232_RX_DATA_LENGTH) == HAL_OK)
       {
-        g_rs232_state = 1;
+        g_rs232_rx_state = 1;
       }
     }
   }
@@ -294,11 +316,11 @@ void StartTask_485C2TR(void *argument)
   for (;;)
   {
     xLastWakeTime = osKernelGetTickCount();
-    osDelayUntil(xLastWakeTime + 1000);
+    osDelayUntil(xLastWakeTime + 10);
     RS485_Status_Set(RS485_CH2, RS485_WRITE);
     osDelay(1);
-    g_rs485_c2_tx_cnt = 8;
-    g_rs485_c2_rx_cnt = 7;
+    g_rs485_c2_tx_len = 8;
+    g_rs485_c2_rx_len = 7;
     g_rs485_c2_tx_buf[0] = 0x01;
     g_rs485_c2_tx_buf[1] = 0x03;
     g_rs485_c2_tx_buf[2] = 0x00;
@@ -307,7 +329,7 @@ void StartTask_485C2TR(void *argument)
     g_rs485_c2_tx_buf[5] = 0x01;
     g_rs485_c2_tx_buf[6] = 0xD5;
     g_rs485_c2_tx_buf[7] = 0xCA;
-    HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&g_rs485_c2_tx_buf, g_rs485_c2_tx_cnt);
+    HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&g_rs485_c2_tx_buf, g_rs485_c2_tx_len);
     g_rs485_c2_state = 1;
   }
   /* USER CODE END StartTask_485C2TR */
@@ -331,7 +353,6 @@ void StartTask_CAN(void *argument)
     xLastWakeTime = osKernelGetTickCount();
     osDelayUntil(xLastWakeTime + 1000);
 
-    
     g_can_tx_message_head.IDE = CAN_ID_STD;
     g_can_tx_message_head.StdId = 101;
     g_can_tx_message_head.RTR = CAN_RTR_DATA;
@@ -352,19 +373,28 @@ void StartTask_CAN(void *argument)
 void StartTask_WorkFlow(void *argument)
 {
   /* USER CODE BEGIN StartTask_WorkFlow */
+  TickType_t xLastWakeTime;
+  Rangefinder_Msg msg_temp;
   /* Infinite loop */
   for (;;)
   {
-    osDelay(1);
+    xLastWakeTime = osKernelGetTickCount();
+    osDelayUntil(xLastWakeTime + 5);
 
-    if (2 == g_rs232_state)
+    if (0 == Rangerfinder_Msg_Get(&msg_temp))
     {
-      g_distance_uint32 = g_rs232_rx_buf[6];
-      g_distance_uint32 |= (g_rs232_rx_buf[5] << 8);
-      g_distance_uint32 |= (g_rs232_rx_buf[4] << 16);
-      g_distance_uint32 |= (g_rs232_rx_buf[3] << 24);
-      g_distance_f32 = g_distance_uint32 / 10.0F;
-      g_rs232_state = 0;
+      if (0x03 == msg_temp.func_code && 0x04 == msg_temp.data_len)
+      {
+        uint16_t check = 0;
+        check = crc16_modbus(0xFFFF, (const unsigned char *)&msg_temp, RS232_RX_DATA_LENGTH - 2);
+        if ((check & 0x00FF) == msg_temp.crc_l && ((check >> 8) & 0x00FF) == msg_temp.crc_h)
+        {
+          g_distance = msg_temp.data[3];
+          g_distance |= (msg_temp.data[2] << 8);
+          g_distance |= (msg_temp.data[1] << 16);
+          g_distance |= (msg_temp.data[0] << 24);
+        }
+      }
     }
 
     if (3 == g_rs485_c2_state)
@@ -375,6 +405,40 @@ void StartTask_WorkFlow(void *argument)
     }
   }
   /* USER CODE END StartTask_WorkFlow */
+}
+
+/* USER CODE BEGIN Header_StartTask_PWM */
+/**
+ * @brief Function implementing the myTask_PWM thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_StartTask_PWM */
+void StartTask_PWM(void *argument)
+{
+  /* USER CODE BEGIN StartTask_PWM */
+  uint8_t step = 0;
+  TIM_OC_InitTypeDef config;
+  config.OCMode = TIM_OCFAST_ENABLE;
+  config.Pulse = g_pwm_mid;
+  config.OCFastMode = TIM_OCFAST_ENABLE;
+  config.OCPolarity = TIM_OCPOLARITY_HIGH;
+  config.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  config.OCIdleState = TIM_OCIDLESTATE_RESET;
+  config.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  /* Infinite loop */
+  for (;;)
+  {
+    osDelay(1000);
+    HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+    osDelay(1000);
+    config.Pulse = g_pwm_max;
+    HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+    osDelay(1000);
+    config.Pulse = g_pwm_min;
+    HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+  }
+  /* USER CODE END StartTask_PWM */
 }
 
 /* Private application code --------------------------------------------------*/

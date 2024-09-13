@@ -30,6 +30,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "CRC16_MODBUS.h"
+#include "msg_list.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,23 +51,30 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-volatile uint8_t g_rs232_state = 0;
+volatile uint8_t g_rs232_rx_state = 0;
 volatile uint8_t g_rs232_rx_buf[RS232_RX_DATA_LENGTH] = {0};
-volatile uint32_t g_distance_uint32 = 0; // 0.1mm
-volatile float g_distance_f32 = 0.0F;    // mm
+
 volatile uint8_t g_rs485_c1_state = 0;
+volatile uint8_t g_rs485_c1_tx_len = 0;
+volatile uint8_t g_rs485_c1_rx_len = 0;
 volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH] = {0};
 volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH] = {0};
+
 volatile uint8_t g_rs485_c2_state = 0;
-volatile uint8_t g_rs485_c2_tx_cnt = 0;
-volatile uint8_t g_rs485_c2_rx_cnt = 0;
+volatile uint8_t g_rs485_c2_tx_len = 0;
+volatile uint8_t g_rs485_c2_rx_len = 0;
 volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH] = {0};
 volatile uint8_t g_rs485_c2_rx_buf[RS485_C2_RX_DATA_LENGTH] = {0};
-volatile uint16_t g_tdlas_ppm = 0;
+volatile uint32_t g_tdlas_ppm = 0;
+
 CAN_TxHeaderTypeDef g_can_tx_message_head;
 volatile uint8_t g_can_tx_data[8] = {0};
 CAN_RxHeaderTypeDef g_can_rx_message_head;
 volatile uint8_t g_can_rx_data[8] = {0};
+
+volatile uint16_t g_pwm_min = 1000;
+volatile uint16_t g_pwm_mid = 1500;
+volatile uint16_t g_pwm_max = 2000;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,10 +82,13 @@ void SystemClock_Config(void);
 void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 void RS232_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos);
+
 void RS485_C1_TxCpltCallback(UART_HandleTypeDef *huart);
 void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos);
+
 void RS485_C2_TxCpltCallback(UART_HandleTypeDef *huart);
 void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos);
+
 void CAN_Filter_Config(void);
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan);
 /* USER CODE END PFP */
@@ -88,9 +99,9 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan);
 /* USER CODE END 0 */
 
 /**
-  * @brief  The application entry point.
-  * @retval int
-  */
+ * @brief  The application entry point.
+ * @retval int
+ */
 int main(void)
 {
 
@@ -127,16 +138,21 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   HAL_UART_RegisterRxEventCallback(&huart1, RS232_RxEventCallBack);
+
   HAL_UART_RegisterCallback(&huart3, HAL_UART_TX_COMPLETE_CB_ID, RS485_C1_TxCpltCallback);
   HAL_UART_RegisterRxEventCallback(&huart2, RS485_C1_RxEventCallBack);
+  RS485_Status_Set(RS485_CH1, RS485_READ);
+
   HAL_UART_RegisterCallback(&huart2, HAL_UART_TX_COMPLETE_CB_ID, RS485_C2_TxCpltCallback);
   HAL_UART_RegisterRxEventCallback(&huart2, RS485_C2_RxEventCallBack);
-  RS485_Status_Set(RS485_CH1, RS485_READ);
   RS485_Status_Set(RS485_CH2, RS485_WRITE);
+
   CAN_Filter_Config();
   HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
   HAL_CAN_Start(&hcan);
   HAL_CAN_RegisterCallback(&hcan, HAL_CAN_RX_FIFO0_MSG_PENDING_CB_ID, HAL_CAN_RxFifo0MsgPendingCallback);
+
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -162,9 +178,9 @@ int main(void)
 }
 
 /**
-  * @brief System Clock Configuration
-  * @retval None
-  */
+ * @brief System Clock Configuration
+ * @retval None
+ */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -172,9 +188,9 @@ void SystemClock_Config(void)
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
+   * in the RCC_OscInitTypeDef structure.
+   */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI | RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
@@ -188,9 +204,8 @@ void SystemClock_Config(void)
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+   */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
@@ -212,34 +227,30 @@ void SystemClock_Config(void)
 void RS232_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
 {
   HAL_UART_RxEventTypeTypeDef event_type = 3; // set a invalid value temp
+  Rangefinder_Msg msg_temp;
+
   event_type = HAL_UARTEx_GetRxEventType(huart);
   switch (event_type)
   {
   case HAL_UART_RXEVENT_TC:
-    if (g_rs232_rx_buf[1] == 0x03 && g_rs232_rx_buf[2] == 0x04)
+    msg_temp.addr = g_rs232_rx_buf[0];
+    msg_temp.func_code = g_rs232_rx_buf[1];
+    msg_temp.data_len = g_rs232_rx_buf[2];
+    for (uint8_t i = 0; i < 4; i++)
     {
-      uint16_t check = 0;
-      check = crc16_modbus(0xFFFF, (const unsigned char *)g_rs232_rx_buf, RS232_RX_DATA_LENGTH - 2);
-      if ((check & 0x00FF) == g_rs232_rx_buf[RS232_RX_DATA_LENGTH - 2] && ((check >> 8) & 0x00FF) == g_rs232_rx_buf[RS232_RX_DATA_LENGTH - 1])
-      {
-        HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
-        g_rs232_state = 2;
-      }
-      else
-      {
-        g_rs232_state = 0;
-      }
+      msg_temp.data[i] = g_rs232_rx_buf[i + 3];
     }
-    else
-    {
-      g_rs232_state = 0;
-    }
+    msg_temp.crc_l = g_rs232_rx_buf[7];
+    msg_temp.crc_h = g_rs232_rx_buf[8];
+    Rangefinder_Msg_Add(&msg_temp);
+    HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
+    g_rs232_rx_state = 0;
     break;
   case HAL_UART_RXEVENT_HT:
     /* code */
     break;
   case HAL_UART_RXEVENT_IDLE:
-    g_rs232_state = 0;
+    g_rs232_rx_state = 0;
     break;
 
   default:
@@ -258,7 +269,7 @@ void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
 void RS485_C2_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   RS485_Status_Set(RS485_CH2, RS485_READ);
-  if (HAL_UARTEx_ReceiveToIdle_DMA(&huart2, (uint8_t *)g_rs485_c2_rx_buf, g_rs485_c2_rx_cnt) == HAL_OK)
+  if (HAL_UARTEx_ReceiveToIdle_DMA(huart, (uint8_t *)g_rs485_c2_rx_buf, g_rs485_c2_rx_len) == HAL_OK)
   {
     g_rs485_c2_state = 2;
   }
@@ -274,8 +285,8 @@ void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
     if (g_rs485_c2_rx_buf[1] == 0x03 && g_rs485_c2_rx_buf[2] == 0x02)
     {
       uint16_t check = 0;
-      check = crc16_modbus(0xFFFF, (const unsigned char *)g_rs485_c2_rx_buf, g_rs485_c2_rx_cnt - 2);
-      if ((check & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_cnt - 2] && ((check >> 8) & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_cnt - 1])
+      check = crc16_modbus(0xFFFF, (const unsigned char *)g_rs485_c2_rx_buf, g_rs485_c2_rx_len - 2);
+      if ((check & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_len - 2] && ((check >> 8) & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_len - 1])
       {
         HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
         g_rs485_c2_state = 3;
@@ -370,27 +381,27 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
   HAL_StatusTypeDef status = HAL_TIMEOUT;
 
   status = HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &g_can_rx_message_head, (uint8_t *)g_can_rx_data);
-  if(status == HAL_OK)
+  if (status == HAL_OK)
   {
-    
   }
 }
 /* USER CODE END 4 */
 
 /**
-  * @brief  Period elapsed callback in non blocking mode
-  * @note   This function is called  when TIM2 interrupt took place, inside
-  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
-  * a global variable "uwTick" used as application time base.
-  * @param  htim : TIM handle
-  * @retval None
-  */
+ * @brief  Period elapsed callback in non blocking mode
+ * @note   This function is called  when TIM2 interrupt took place, inside
+ * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+ * a global variable "uwTick" used as application time base.
+ * @param  htim : TIM handle
+ * @retval None
+ */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
 
   /* USER CODE END Callback 0 */
-  if (htim->Instance == TIM2) {
+  if (htim->Instance == TIM2)
+  {
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
@@ -399,9 +410,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 }
 
 /**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
+ * @brief  This function is executed in case of error occurrence.
+ * @retval None
+ */
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
@@ -413,14 +424,14 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
+ * @brief  Reports the name of the source file and the source line number
+ *         where the assert_param error has occurred.
+ * @param  file: pointer to the source file name
+ * @param  line: assert_param error line source number
+ * @retval None
+ */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */

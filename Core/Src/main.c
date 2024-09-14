@@ -55,14 +55,10 @@ volatile uint8_t g_rs232_rx_state = 0;
 volatile uint8_t g_rs232_rx_buf[RS232_RX_DATA_LENGTH] = {0};
 
 volatile uint8_t g_rs485_c1_state = 0;
-volatile uint8_t g_rs485_c1_tx_len = 0;
-volatile uint8_t g_rs485_c1_rx_len = 0;
 volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH] = {0};
 volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH] = {0};
 
 volatile uint8_t g_rs485_c2_state = 0;
-volatile uint8_t g_rs485_c2_tx_len = 0;
-volatile uint8_t g_rs485_c2_rx_len = 0;
 volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH] = {0};
 volatile uint8_t g_rs485_c2_rx_buf[RS485_C2_RX_DATA_LENGTH] = {0};
 
@@ -266,38 +262,47 @@ void RS485_C2_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   RS485_Status_Set(RS485_CH2, RS485_READ);
   HAL_UARTEx_ReceiveToIdle_DMA(huart, (uint8_t *)g_rs485_c2_rx_buf, RS485_C2_RX_DATA_LENGTH);
+  g_rs485_c2_state = 2;
 }
 
 void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
 {
   HAL_UART_RxEventTypeTypeDef event_type = 3; // set a invalid value temp
+  TDLAS_Rx_Msg msg_temp;
+
   event_type = HAL_UARTEx_GetRxEventType(huart);
   switch (event_type)
   {
   case HAL_UART_RXEVENT_TC:
-    if (g_rs485_c2_rx_buf[1] == 0x03 && g_rs485_c2_rx_buf[2] == 0x02)
-    {
-      uint16_t check = 0;
-      check = crc16_modbus(0xFFFF, (const unsigned char *)g_rs485_c2_rx_buf, g_rs485_c2_rx_len - 2);
-      if ((check & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_len - 2] && ((check >> 8) & 0x00FF) == g_rs485_c2_rx_buf[g_rs485_c2_rx_len - 1])
-      {
-        HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
-        g_rs485_c2_state = 3;
-      }
-      else
-      {
-        g_rs485_c2_state = 0;
-      }
-    }
-    else
-    {
-      g_rs485_c2_state = 0;
-    }
+    g_rs485_c2_state = 0;
     break;
   case HAL_UART_RXEVENT_HT:
     /* code */
     break;
   case HAL_UART_RXEVENT_IDLE:
+    msg_temp.addr = g_rs485_c2_rx_buf[0];
+    msg_temp.func_code = g_rs485_c2_rx_buf[1];
+    if (0x03 == msg_temp.func_code)
+    {
+      msg_temp.data_len = g_rs485_c2_rx_buf[2];
+      for (uint8_t i = 0; i < msg_temp.data_len; i++)
+      {
+        msg_temp.data[i] = g_rs485_c2_rx_buf[i + 3];
+      }
+      msg_temp.crc_l = g_rs485_c2_rx_buf[msg_temp.data_len + 3];
+      msg_temp.crc_h = g_rs485_c2_rx_buf[msg_temp.data_len + 4];
+    }
+    else if (0x10 == msg_temp.func_code)
+    {
+      msg_temp.reg_addr = (g_rs485_c2_rx_buf[3] & 0x00FF);
+      msg_temp.reg_addr |= (g_rs485_c2_rx_buf[2] << 8);
+      msg_temp.reg_cnt = (g_rs485_c2_rx_buf[5] & 0x00FF);
+      msg_temp.reg_cnt |= (g_rs485_c2_rx_buf[4] << 8);
+      msg_temp.crc_l = g_rs485_c2_rx_buf[6];
+      msg_temp.crc_h = g_rs485_c2_rx_buf[7];
+    }
+    TDLAS_Rx_Msg_Add(&msg_temp);
+    HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
     g_rs485_c2_state = 0;
     break;
 

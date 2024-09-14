@@ -55,17 +55,14 @@ extern volatile uint8_t g_rs232_rx_buf[RS232_RX_DATA_LENGTH];
 volatile uint32_t g_distance = 0; // 0.1mm
 
 extern volatile uint8_t g_rs485_c1_state;
-extern volatile uint8_t g_rs485_c1_tx_len;
-extern volatile uint8_t g_rs485_c1_rx_len;
 extern volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH];
 extern volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH];
 
 extern volatile uint8_t g_rs485_c2_state;
-extern volatile uint8_t g_rs485_c2_tx_len;
-extern volatile uint8_t g_rs485_c2_rx_len;
 extern volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH];
 extern volatile uint8_t g_rs485_c2_rx_buf[RS485_C2_RX_DATA_LENGTH];
 volatile uint32_t g_tdlas_ppm = 0;
+volatile uint8_t g_tdlas_laser_request = 0; // 0 no request 1 open request 2 close request
 
 extern CAN_TxHeaderTypeDef g_can_tx_message_head;
 extern volatile uint8_t g_can_tx_data[8];
@@ -316,49 +313,72 @@ void StartTask_485C2TR(void *argument)
   TickType_t xLastWakeTime;
   TDLAS_Tx_Msg tdlas_tx_msg_temp;
   uint16_t check = 0;
+  uint16_t timeout_cnt = 0;
   /* Infinite loop */
   for (;;)
   {
     xLastWakeTime = osKernelGetTickCount();
     osDelayUntil(xLastWakeTime + 5);
-    if (0 == TDLAS_Tx_Msg_Get(&tdlas_tx_msg_temp))
+
+    if (0 != g_rs485_c2_state)
     {
-      RS485_Status_Set(RS485_CH2, RS485_WRITE);
-      osDelay(1);
-      if (0x03 == tdlas_tx_msg_temp.func_code)
+      timeout_cnt++;
+      if (timeout_cnt >= 8) // 40ms timeout
       {
-        g_rs485_c2_tx_len = 8;
-        g_rs485_c2_tx_buf[0] = tdlas_tx_msg_temp.addr;
-        g_rs485_c2_tx_buf[1] = tdlas_tx_msg_temp.func_code;
-        g_rs485_c2_tx_buf[2] = (tdlas_tx_msg_temp.reg_addr >> 8) & 0x00FF;
-        g_rs485_c2_tx_buf[3] = tdlas_tx_msg_temp.reg_addr & 0x00FF;
-        g_rs485_c2_tx_buf[4] = (tdlas_tx_msg_temp.reg_cnt >> 8) & 0x00FF;
-        g_rs485_c2_tx_buf[5] = tdlas_tx_msg_temp.reg_cnt & 0x00FF;
-        check = crc16_modbus(0xFFFF, (const unsigned char *)&g_rs485_c2_tx_buf, g_rs485_c2_tx_len - 2);
-        tdlas_tx_msg_temp.crc_l = check & 0x00FF;
-        tdlas_tx_msg_temp.crc_h = (check >> 8) & 0x00FF;
-        g_rs485_c2_tx_buf[6] = tdlas_tx_msg_temp.crc_l;
-        g_rs485_c2_tx_buf[7] = tdlas_tx_msg_temp.crc_h;
+        HAL_UART_AbortReceive(&huart2);
+        g_rs485_c2_state = 0;
+        timeout_cnt = 0;
       }
-      else if (0x10 == tdlas_tx_msg_temp.func_code)
+    }
+    else
+    {
+      timeout_cnt = 0;
+    }
+
+    if (0 == g_rs485_c2_state)
+    {
+      if (0 == TDLAS_Tx_Msg_Get(&tdlas_tx_msg_temp))
       {
-        g_rs485_c2_tx_len = 11;
-        g_rs485_c2_tx_buf[0] = tdlas_tx_msg_temp.addr;
-        g_rs485_c2_tx_buf[1] = tdlas_tx_msg_temp.func_code;
-        g_rs485_c2_tx_buf[2] = (tdlas_tx_msg_temp.reg_addr >> 8) & 0x00FF;
-        g_rs485_c2_tx_buf[3] = tdlas_tx_msg_temp.reg_addr & 0x00FF;
-        g_rs485_c2_tx_buf[4] = (tdlas_tx_msg_temp.reg_cnt >> 8) & 0x00FF;
-        g_rs485_c2_tx_buf[5] = tdlas_tx_msg_temp.reg_cnt & 0x00FF;
-        g_rs485_c2_tx_buf[6] = tdlas_tx_msg_temp.data_len;
-        g_rs485_c2_tx_buf[7] = tdlas_tx_msg_temp.data[0];
-        g_rs485_c2_tx_buf[8] = tdlas_tx_msg_temp.data[1];
-        check = crc16_modbus(0xFFFF, (const unsigned char *)&g_rs485_c2_tx_buf, g_rs485_c2_tx_len - 2);
-        tdlas_tx_msg_temp.crc_l = check & 0x00FF;
-        tdlas_tx_msg_temp.crc_h = (check >> 8) & 0x00FF;
-        g_rs485_c2_tx_buf[6] = tdlas_tx_msg_temp.crc_l;
-        g_rs485_c2_tx_buf[7] = tdlas_tx_msg_temp.crc_h;
+        if (0x03 == tdlas_tx_msg_temp.func_code)
+        {
+          RS485_Status_Set(RS485_CH2, RS485_WRITE);
+          osDelay(1);
+          g_rs485_c2_tx_buf[0] = tdlas_tx_msg_temp.addr;
+          g_rs485_c2_tx_buf[1] = tdlas_tx_msg_temp.func_code;
+          g_rs485_c2_tx_buf[2] = (tdlas_tx_msg_temp.reg_addr >> 8) & 0x00FF;
+          g_rs485_c2_tx_buf[3] = tdlas_tx_msg_temp.reg_addr & 0x00FF;
+          g_rs485_c2_tx_buf[4] = (tdlas_tx_msg_temp.reg_cnt >> 8) & 0x00FF;
+          g_rs485_c2_tx_buf[5] = tdlas_tx_msg_temp.reg_cnt & 0x00FF;
+          check = crc16_modbus(0xFFFF, (const unsigned char *)&g_rs485_c2_tx_buf, 6);
+          tdlas_tx_msg_temp.crc_l = check & 0x00FF;
+          tdlas_tx_msg_temp.crc_h = (check >> 8) & 0x00FF;
+          g_rs485_c2_tx_buf[6] = tdlas_tx_msg_temp.crc_l;
+          g_rs485_c2_tx_buf[7] = tdlas_tx_msg_temp.crc_h;
+          HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&g_rs485_c2_tx_buf, 8);
+          g_rs485_c2_state = 1;
+        }
+        else if (0x10 == tdlas_tx_msg_temp.func_code)
+        {
+          RS485_Status_Set(RS485_CH2, RS485_WRITE);
+          osDelay(1);
+          g_rs485_c2_tx_buf[0] = tdlas_tx_msg_temp.addr;
+          g_rs485_c2_tx_buf[1] = tdlas_tx_msg_temp.func_code;
+          g_rs485_c2_tx_buf[2] = (tdlas_tx_msg_temp.reg_addr >> 8) & 0x00FF;
+          g_rs485_c2_tx_buf[3] = tdlas_tx_msg_temp.reg_addr & 0x00FF;
+          g_rs485_c2_tx_buf[4] = (tdlas_tx_msg_temp.reg_cnt >> 8) & 0x00FF;
+          g_rs485_c2_tx_buf[5] = tdlas_tx_msg_temp.reg_cnt & 0x00FF;
+          g_rs485_c2_tx_buf[6] = tdlas_tx_msg_temp.data_len;
+          g_rs485_c2_tx_buf[7] = tdlas_tx_msg_temp.data[0];
+          g_rs485_c2_tx_buf[8] = tdlas_tx_msg_temp.data[1];
+          check = crc16_modbus(0xFFFF, (const unsigned char *)&g_rs485_c2_tx_buf, 9);
+          tdlas_tx_msg_temp.crc_l = check & 0x00FF;
+          tdlas_tx_msg_temp.crc_h = (check >> 8) & 0x00FF;
+          g_rs485_c2_tx_buf[9] = tdlas_tx_msg_temp.crc_l;
+          g_rs485_c2_tx_buf[10] = tdlas_tx_msg_temp.crc_h;
+          HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&g_rs485_c2_tx_buf, 11);
+          g_rs485_c2_state = 1;
+        }
       }
-      HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&g_rs485_c2_tx_buf, g_rs485_c2_tx_len);
     }
   }
   /* USER CODE END StartTask_485C2TR */
@@ -403,9 +423,10 @@ void StartTask_WorkFlow(void *argument)
 {
   /* USER CODE BEGIN StartTask_WorkFlow */
   TickType_t xLastWakeTime;
-  uint16_t period_cnt = 0;
+  uint32_t period_cnt = 0;
   Rangefinder_Msg range_msg_temp;
   TDLAS_Tx_Msg tdlas_tx_msg_temp;
+  TDLAS_Rx_Msg tdlas_rx_msg_temp;
   uint16_t check = 0;
   /* Infinite loop */
   for (;;)
@@ -413,6 +434,10 @@ void StartTask_WorkFlow(void *argument)
     xLastWakeTime = osKernelGetTickCount();
     osDelayUntil(xLastWakeTime + 5);
     period_cnt++;
+    if (period_cnt >= 4294967250)
+    {
+      period_cnt = 0;
+    }
 
     if (0 == Rangerfinder_Msg_Get(&range_msg_temp))
     {
@@ -429,7 +454,7 @@ void StartTask_WorkFlow(void *argument)
       }
     }
 
-    if (period_cnt % 200 == 0) // 
+    if (period_cnt % 10 == 0) // 5ms * 10 = 50ms
     {
       tdlas_tx_msg_temp.addr = 0x01;
       tdlas_tx_msg_temp.func_code = 0x03;
@@ -438,6 +463,58 @@ void StartTask_WorkFlow(void *argument)
       tdlas_tx_msg_temp.crc_l = 0x95;
       tdlas_tx_msg_temp.crc_h = 0xCB;
       TDLAS_Tx_Msg_Add(&tdlas_tx_msg_temp);
+    }
+
+    if (1 == g_tdlas_laser_request) // open
+    {
+      tdlas_tx_msg_temp.addr = 0x01;
+      tdlas_tx_msg_temp.func_code = 0x10;
+      tdlas_tx_msg_temp.reg_addr = 0x0006;
+      tdlas_tx_msg_temp.reg_cnt = 0x0001;
+      tdlas_tx_msg_temp.data_len = 0x02;
+      tdlas_tx_msg_temp.data[0] = 0x00;
+      tdlas_tx_msg_temp.data[1] = 0x01;
+      tdlas_tx_msg_temp.crc_l = 0x67;
+      tdlas_tx_msg_temp.crc_h = 0xF6;
+      TDLAS_Tx_Msg_Add(&tdlas_tx_msg_temp);
+      g_tdlas_laser_request = 0;
+    }
+    else if (2 == g_tdlas_laser_request) // close
+    {
+      tdlas_tx_msg_temp.addr = 0x01;
+      tdlas_tx_msg_temp.func_code = 0x10;
+      tdlas_tx_msg_temp.reg_addr = 0x0006;
+      tdlas_tx_msg_temp.reg_cnt = 0x0001;
+      tdlas_tx_msg_temp.data_len = 0x02;
+      tdlas_tx_msg_temp.data[0] = 0x00;
+      tdlas_tx_msg_temp.data[1] = 0x00;
+      tdlas_tx_msg_temp.crc_l = 0xA6;
+      tdlas_tx_msg_temp.crc_h = 0x36;
+      TDLAS_Tx_Msg_Add(&tdlas_tx_msg_temp);
+      g_tdlas_laser_request = 0;
+    }
+
+    if (0 == TDLAS_Rx_Msg_Get(&tdlas_rx_msg_temp))
+    {
+      uint8_t data_buf_temp[16] = {0};
+      if (0x03 == tdlas_rx_msg_temp.func_code && 0x04 == tdlas_rx_msg_temp.data_len)
+      {
+        data_buf_temp[0] = tdlas_rx_msg_temp.addr;
+        data_buf_temp[1] = tdlas_rx_msg_temp.func_code;
+        data_buf_temp[2] = tdlas_rx_msg_temp.data_len;
+        for (uint8_t i = 0; i < tdlas_rx_msg_temp.data_len; i++)
+        {
+          data_buf_temp[i + 3] = tdlas_rx_msg_temp.data[i];
+        }
+        check = crc16_modbus(0xFFFF, (const unsigned char *)&data_buf_temp, tdlas_rx_msg_temp.data_len + 3);
+        if ((check & 0x00FF) == tdlas_rx_msg_temp.crc_l && ((check >> 8) & 0x00FF) == tdlas_rx_msg_temp.crc_h)
+        {
+          g_tdlas_ppm = tdlas_rx_msg_temp.data[3];
+          g_tdlas_ppm |= (tdlas_rx_msg_temp.data[2] << 8);
+          g_tdlas_ppm |= (tdlas_rx_msg_temp.data[1] << 16);
+          g_tdlas_ppm |= (tdlas_rx_msg_temp.data[0] << 24);
+        }
+      }
     }
   }
   /* USER CODE END StartTask_WorkFlow */

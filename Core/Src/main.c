@@ -54,7 +54,7 @@
 volatile uint8_t g_rs232_rx_state = 0;
 volatile uint8_t g_rs232_rx_buf[RS232_RX_DATA_LENGTH] = {0};
 
-volatile uint8_t g_rs485_c1_state = 0; // 0 idle 1 receiving 2 sending
+volatile uint8_t g_rs485_c1_state = 0; // 0 idle 1 receiving 2 decoding 3 sending
 volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH] = {0};
 volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH] = {0};
 
@@ -271,7 +271,7 @@ void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
     /* code */
     break;
   case HAL_UART_RXEVENT_IDLE:
-    if (g_rs485_c1_rx_buf[0] == 0x55 && g_rs485_c1_rx_buf[1] = 0xAA)
+    if (g_rs485_c1_rx_buf[0] == 0x55 && g_rs485_c1_rx_buf[1] == 0xAA)
     {
       msg_temp.head_1 = g_rs485_c1_rx_buf[0];
       msg_temp.head_2 = g_rs485_c1_rx_buf[1];

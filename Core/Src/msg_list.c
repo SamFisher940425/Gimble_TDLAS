@@ -194,7 +194,7 @@ int8_t Ctrl_Tx_Msg_Get(Ctrl_Com_Msg *msg)
 
 int8_t Ctrl_Rx_Msg_Add(Ctrl_Com_Msg *msg)
 {
-    if (((g_ctrl_rx_msg_w_index + 1) % CTRL_RX_MSG_MAX_SIZE) = g_ctrl_rx_msg_r_index)
+    if (((g_ctrl_rx_msg_w_index + 1) % CTRL_RX_MSG_MAX_SIZE) == g_ctrl_rx_msg_r_index)
     {
         return -1;
     }

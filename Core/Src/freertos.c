@@ -35,7 +35,17 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+enum Ctrl_Msg_Func_Code
+{
+  GET_DATA = 0x01,
+  MOTION_STATUS,
+  RETURN_ZERO,
+  ANGLE_AND_SPEED_CMD,
+  DST_ANGLE_CMD,
+  EMERGENCY_STOP,
+  WIPERS_CTRL,
+  LASER_CTRL
+};
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -134,7 +144,7 @@ const osThreadAttr_t myTask_PWM_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-
+void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -287,6 +297,7 @@ void StartTask_485C1TR(void *argument)
 {
   /* USER CODE BEGIN StartTask_485C1TR */
   TickType_t xLastWakeTime;
+  Ctrl_Com_Msg ctrl_tx_msg_temp;
   /* Infinite loop */
   for (;;)
   {
@@ -299,6 +310,26 @@ void StartTask_485C1TR(void *argument)
       {
         g_rs485_c1_state = 1;
       }
+    }
+
+    if (0 == Ctrl_Tx_Msg_Get(&ctrl_tx_msg_temp))
+    {
+      RS485_Status_Set(RS485_CH1, RS485_WRITE);
+      g_rs485_c1_tx_buf[0] = ctrl_tx_msg_temp.head_1;
+      g_rs485_c1_tx_buf[1] = ctrl_tx_msg_temp.head_2;
+      g_rs485_c1_tx_buf[2] = ctrl_tx_msg_temp.src_id;
+      g_rs485_c1_tx_buf[3] = ctrl_tx_msg_temp.dst_id;
+      g_rs485_c1_tx_buf[4] = ctrl_tx_msg_temp.func_code;
+      g_rs485_c1_tx_buf[5] = ctrl_tx_msg_temp.data_len;
+      for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len; i++)
+      {
+        g_rs485_c1_tx_buf[i + 6] = ctrl_tx_msg_temp.data[i];
+      }
+      g_rs485_c1_tx_buf[ctrl_tx_msg_temp.data_len + 6] = ctrl_tx_msg_temp.check;
+      g_rs485_c1_tx_buf[ctrl_tx_msg_temp.data_len + 7] = ctrl_tx_msg_temp.tail_1;
+      g_rs485_c1_tx_buf[ctrl_tx_msg_temp.data_len + 8] = ctrl_tx_msg_temp.tail_2;
+      HAL_UART_Transmit_DMA(&huart3, (uint8_t *)&g_rs485_c1_tx_buf, ctrl_tx_msg_temp.data_len + 9);
+      g_rs485_c1_state = 3;
     }
   }
   /* USER CODE END StartTask_485C1TR */
@@ -316,7 +347,7 @@ void StartTask_485C2TR(void *argument)
   /* USER CODE BEGIN StartTask_485C2TR */
   TickType_t xLastWakeTime;
   TDLAS_Tx_Msg tdlas_tx_msg_temp;
-  uint16_t check = 0;
+  uint16_t crc16_check = 0;
   uint16_t timeout_cnt = 0;
   /* Infinite loop */
   for (;;)
@@ -352,9 +383,9 @@ void StartTask_485C2TR(void *argument)
           g_rs485_c2_tx_buf[3] = tdlas_tx_msg_temp.reg_addr & 0x00FF;
           g_rs485_c2_tx_buf[4] = (tdlas_tx_msg_temp.reg_cnt >> 8) & 0x00FF;
           g_rs485_c2_tx_buf[5] = tdlas_tx_msg_temp.reg_cnt & 0x00FF;
-          check = crc16_modbus(0xFFFF, (const unsigned char *)&g_rs485_c2_tx_buf, 6);
-          tdlas_tx_msg_temp.crc_l = check & 0x00FF;
-          tdlas_tx_msg_temp.crc_h = (check >> 8) & 0x00FF;
+          crc16_check = crc16_modbus(0xFFFF, (const unsigned char *)&g_rs485_c2_tx_buf, 6);
+          tdlas_tx_msg_temp.crc_l = crc16_check & 0x00FF;
+          tdlas_tx_msg_temp.crc_h = (crc16_check >> 8) & 0x00FF;
           g_rs485_c2_tx_buf[6] = tdlas_tx_msg_temp.crc_l;
           g_rs485_c2_tx_buf[7] = tdlas_tx_msg_temp.crc_h;
           HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&g_rs485_c2_tx_buf, 8);
@@ -371,9 +402,9 @@ void StartTask_485C2TR(void *argument)
           g_rs485_c2_tx_buf[6] = tdlas_tx_msg_temp.data_len;
           g_rs485_c2_tx_buf[7] = tdlas_tx_msg_temp.data[0];
           g_rs485_c2_tx_buf[8] = tdlas_tx_msg_temp.data[1];
-          check = crc16_modbus(0xFFFF, (const unsigned char *)&g_rs485_c2_tx_buf, 9);
-          tdlas_tx_msg_temp.crc_l = check & 0x00FF;
-          tdlas_tx_msg_temp.crc_h = (check >> 8) & 0x00FF;
+          crc16_check = crc16_modbus(0xFFFF, (const unsigned char *)&g_rs485_c2_tx_buf, 9);
+          tdlas_tx_msg_temp.crc_l = crc16_check & 0x00FF;
+          tdlas_tx_msg_temp.crc_h = (crc16_check >> 8) & 0x00FF;
           g_rs485_c2_tx_buf[9] = tdlas_tx_msg_temp.crc_l;
           g_rs485_c2_tx_buf[10] = tdlas_tx_msg_temp.crc_h;
           HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&g_rs485_c2_tx_buf, 11);
@@ -428,7 +459,9 @@ void StartTask_WorkFlow(void *argument)
   Rangefinder_Msg range_msg_temp;
   TDLAS_Tx_Msg tdlas_tx_msg_temp;
   TDLAS_Rx_Msg tdlas_rx_msg_temp;
-  uint16_t check = 0;
+  Ctrl_Com_Msg ctrl_rx_msg_temp;
+  uint16_t crc16_check = 0;
+  uint8_t sum_check = 0;
   /* Infinite loop */
   for (;;)
   {
@@ -444,8 +477,8 @@ void StartTask_WorkFlow(void *argument)
     {
       if (0x03 == range_msg_temp.func_code && 0x04 == range_msg_temp.data_len)
       {
-        check = crc16_modbus(0xFFFF, (const unsigned char *)&range_msg_temp, RS232_RX_DATA_LENGTH - 2);
-        if ((check & 0x00FF) == range_msg_temp.crc_l && ((check >> 8) & 0x00FF) == range_msg_temp.crc_h)
+        crc16_check = crc16_modbus(0xFFFF, (const unsigned char *)&range_msg_temp, RS232_RX_DATA_LENGTH - 2);
+        if ((crc16_check & 0x00FF) == range_msg_temp.crc_l && ((crc16_check >> 8) & 0x00FF) == range_msg_temp.crc_h)
         {
           g_distance = range_msg_temp.data[3];
           g_distance |= (range_msg_temp.data[2] << 8);
@@ -507,14 +540,28 @@ void StartTask_WorkFlow(void *argument)
         {
           data_buf_temp[i + 3] = tdlas_rx_msg_temp.data[i];
         }
-        check = crc16_modbus(0xFFFF, (const unsigned char *)&data_buf_temp, tdlas_rx_msg_temp.data_len + 3);
-        if ((check & 0x00FF) == tdlas_rx_msg_temp.crc_l && ((check >> 8) & 0x00FF) == tdlas_rx_msg_temp.crc_h)
+        crc16_check = crc16_modbus(0xFFFF, (const unsigned char *)&data_buf_temp, tdlas_rx_msg_temp.data_len + 3);
+        if ((crc16_check & 0x00FF) == tdlas_rx_msg_temp.crc_l && ((crc16_check >> 8) & 0x00FF) == tdlas_rx_msg_temp.crc_h)
         {
           g_tdlas_ppm = tdlas_rx_msg_temp.data[3];
           g_tdlas_ppm |= (tdlas_rx_msg_temp.data[2] << 8);
           g_tdlas_ppm |= (tdlas_rx_msg_temp.data[1] << 16);
           g_tdlas_ppm |= (tdlas_rx_msg_temp.data[0] << 24);
         }
+      }
+    }
+
+    if (0 == Ctrl_Rx_Msg_Get(&ctrl_rx_msg_temp))
+    {
+      uint8_t *ptr = &ctrl_rx_msg_temp.head_1;
+      sum_check = 0;
+      for (uint8_t i = 0; i < ctrl_rx_msg_temp.data_len + 6; i++)
+      {
+        sum_check += *(ptr + i);
+      }
+      if (ctrl_rx_msg_temp.check == sum_check && 0x0D == ctrl_rx_msg_temp.tail_1 && 0x0A == ctrl_rx_msg_temp.tail_2)
+      {
+        Ctrl_Msg_Decoding(&ctrl_rx_msg_temp);
       }
     }
   }
@@ -585,5 +632,39 @@ void StartTask_PWM(void *argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
+{
+  Ctrl_Com_Msg ctrl_tx_msg_temp;
 
+  switch (msg->func_code)
+  {
+  case GET_DATA:
+    /* code */
+    break;
+  case MOTION_STATUS:
+    /* code */
+    break;
+  case RETURN_ZERO:
+    /* code */
+    break;
+  case ANGLE_AND_SPEED_CMD:
+    /* code */
+    break;
+  case DST_ANGLE_CMD:
+    /* code */
+    break;
+  case EMERGENCY_STOP:
+    /* code */
+    break;
+  case WIPERS_CTRL:
+    /* code */
+    break;
+  case LASER_CTRL:
+    /* code */
+    break;
+
+  default:
+    break;
+  }
+}
 /* USER CODE END Application */

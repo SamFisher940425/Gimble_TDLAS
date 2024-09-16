@@ -260,7 +260,8 @@ void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
 {
   HAL_UART_RxEventTypeTypeDef event_type = 3; // set a invalid value temp
   Ctrl_Com_Msg msg_temp;
-
+	
+	event_type = HAL_UARTEx_GetRxEventType(huart);
   switch (event_type)
   {
   case HAL_UART_RXEVENT_TC:

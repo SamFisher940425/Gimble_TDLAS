@@ -61,6 +61,11 @@ typedef enum
 #define RS485_C1_RX_DATA_LENGTH 32
 #define RS485_C2_TX_DATA_LENGTH 16
 #define RS485_C2_RX_DATA_LENGTH 16
+
+#define CTRL_MSG_HEAD_1 0x55
+#define CTRL_MSG_HEAD_2 0xAA
+#define CTRL_MSG_TAIL_1 0x0D
+#define CTRL_MSG_TAIL_2 0x0A
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/

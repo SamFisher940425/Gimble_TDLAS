@@ -67,6 +67,15 @@ volatile uint32_t g_distance = 0; // 0.1mm
 extern volatile uint8_t g_rs485_c1_state;
 extern volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH];
 extern volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH];
+uint8_t g_gimble_id = 1;
+uint16_t g_pitch_start_dst = 0;
+uint16_t g_pitch_end_dst = 0;
+uint16_t g_pitch_speed_dst = 0;
+uint16_t g_yaw_start_dst = 0;
+uint16_t g_yaw_end_dst = 0;
+uint16_t g_yaw_speed_dst = 0;
+uint8_t g_motion_mode = 0; // 0 dst point mode 1 start-end-speed mode
+uint8_t g_motion_request = 0;
 
 extern volatile uint8_t g_rs485_c2_state;
 extern volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH];
@@ -78,6 +87,9 @@ extern CAN_TxHeaderTypeDef g_can_tx_message_head;
 extern volatile uint8_t g_can_tx_data[8];
 extern CAN_RxHeaderTypeDef g_can_rx_message_head;
 extern volatile uint8_t g_can_rx_data[8];
+uint16_t g_yaw = 0;
+uint16_t g_pitch = 0;
+uint8_t g_motion_status = 0;
 
 volatile uint16_t g_pwm_min = 1000;
 volatile uint16_t g_pwm_mid = 1500;
@@ -427,19 +439,28 @@ void StartTask_CAN(void *argument)
 {
   /* USER CODE BEGIN StartTask_CAN */
   TickType_t xLastWakeTime;
+  Motor_Tx_Ctrl_Msg motor_tx_msg_temp;
   uint32_t can_tx_box = 0;
   /* Infinite loop */
   for (;;)
   {
     xLastWakeTime = osKernelGetTickCount();
-    osDelayUntil(xLastWakeTime + 1000);
+    osDelayUntil(xLastWakeTime + 5);
 
-    g_can_tx_message_head.IDE = CAN_ID_STD;
-    g_can_tx_message_head.StdId = 101;
-    g_can_tx_message_head.RTR = CAN_RTR_DATA;
-    g_can_tx_message_head.TransmitGlobalTime = DISABLE;
-    g_can_tx_message_head.DLC = 8;
-    HAL_CAN_AddTxMessage(&hcan, &g_can_tx_message_head, (uint8_t *)g_can_tx_data, &can_tx_box);
+    if (0 == Motor_Tx_Msg_Get(&motor_tx_msg_temp))
+    {
+      g_can_tx_message_head.StdId = motor_tx_msg_temp.head.StdId;
+      g_can_tx_message_head.ExtId = motor_tx_msg_temp.head.ExtId;
+      g_can_tx_message_head.IDE = motor_tx_msg_temp.head.IDE;
+      g_can_tx_message_head.RTR = motor_tx_msg_temp.head.RTR;
+      g_can_tx_message_head.DLC = motor_tx_msg_temp.head.DLC;
+      g_can_tx_message_head.TransmitGlobalTime = motor_tx_msg_temp.head.TransmitGlobalTime;
+      for (uint8_t i = 0; i < 8; i++)
+      {
+        g_can_tx_data[i] = motor_tx_msg_temp.data[i];
+      }
+      HAL_CAN_AddTxMessage(&hcan, &g_can_tx_message_head, (uint8_t *)g_can_tx_data, &can_tx_box);
+    }
   }
   /* USER CODE END StartTask_CAN */
 }
@@ -488,6 +509,46 @@ void StartTask_WorkFlow(void *argument)
       }
     }
 
+    if (0 == TDLAS_Rx_Msg_Get(&tdlas_rx_msg_temp)) // tdlas decode
+    {
+      uint8_t data_buf_temp[16] = {0};
+      if (0x03 == tdlas_rx_msg_temp.func_code && 0x04 == tdlas_rx_msg_temp.data_len)
+      {
+        data_buf_temp[0] = tdlas_rx_msg_temp.addr;
+        data_buf_temp[1] = tdlas_rx_msg_temp.func_code;
+        data_buf_temp[2] = tdlas_rx_msg_temp.data_len;
+        for (uint8_t i = 0; i < tdlas_rx_msg_temp.data_len; i++)
+        {
+          data_buf_temp[i + 3] = tdlas_rx_msg_temp.data[i];
+        }
+        crc16_check = crc16_modbus(0xFFFF, (const unsigned char *)&data_buf_temp, tdlas_rx_msg_temp.data_len + 3);
+        if ((crc16_check & 0x00FF) == tdlas_rx_msg_temp.crc_l && ((crc16_check >> 8) & 0x00FF) == tdlas_rx_msg_temp.crc_h)
+        {
+          g_tdlas_ppm = tdlas_rx_msg_temp.data[3];
+          g_tdlas_ppm |= (tdlas_rx_msg_temp.data[2] << 8);
+          g_tdlas_ppm |= (tdlas_rx_msg_temp.data[1] << 16);
+          g_tdlas_ppm |= (tdlas_rx_msg_temp.data[0] << 24);
+        }
+      }
+    }
+
+    if (0 == Ctrl_Rx_Msg_Get(&ctrl_rx_msg_temp))
+    {
+      uint8_t *ptr = &ctrl_rx_msg_temp.head_1;
+      sum_check = 0;
+      for (uint8_t i = 0; i < ctrl_rx_msg_temp.data_len + 6; i++)
+      {
+        sum_check += *(ptr + i);
+      }
+      if (ctrl_rx_msg_temp.check == sum_check && 0x0D == ctrl_rx_msg_temp.tail_1 && 0x0A == ctrl_rx_msg_temp.tail_2)
+      {
+        if (g_gimble_id == ctrl_rx_msg_temp.dst_id)
+        {
+          Ctrl_Msg_Decoding(&ctrl_rx_msg_temp);
+        }
+      }
+    }
+
     if (period_cnt % 10 == 0) // 5ms * 10 = 50ms send tdlas measure cmd
     {
       tdlas_tx_msg_temp.addr = 0x01;
@@ -526,43 +587,6 @@ void StartTask_WorkFlow(void *argument)
       tdlas_tx_msg_temp.crc_h = 0x36;
       TDLAS_Tx_Msg_Add(&tdlas_tx_msg_temp);
       g_tdlas_laser_request = 0;
-    }
-
-    if (0 == TDLAS_Rx_Msg_Get(&tdlas_rx_msg_temp)) // tdlas decode
-    {
-      uint8_t data_buf_temp[16] = {0};
-      if (0x03 == tdlas_rx_msg_temp.func_code && 0x04 == tdlas_rx_msg_temp.data_len)
-      {
-        data_buf_temp[0] = tdlas_rx_msg_temp.addr;
-        data_buf_temp[1] = tdlas_rx_msg_temp.func_code;
-        data_buf_temp[2] = tdlas_rx_msg_temp.data_len;
-        for (uint8_t i = 0; i < tdlas_rx_msg_temp.data_len; i++)
-        {
-          data_buf_temp[i + 3] = tdlas_rx_msg_temp.data[i];
-        }
-        crc16_check = crc16_modbus(0xFFFF, (const unsigned char *)&data_buf_temp, tdlas_rx_msg_temp.data_len + 3);
-        if ((crc16_check & 0x00FF) == tdlas_rx_msg_temp.crc_l && ((crc16_check >> 8) & 0x00FF) == tdlas_rx_msg_temp.crc_h)
-        {
-          g_tdlas_ppm = tdlas_rx_msg_temp.data[3];
-          g_tdlas_ppm |= (tdlas_rx_msg_temp.data[2] << 8);
-          g_tdlas_ppm |= (tdlas_rx_msg_temp.data[1] << 16);
-          g_tdlas_ppm |= (tdlas_rx_msg_temp.data[0] << 24);
-        }
-      }
-    }
-
-    if (0 == Ctrl_Rx_Msg_Get(&ctrl_rx_msg_temp))
-    {
-      uint8_t *ptr = &ctrl_rx_msg_temp.head_1;
-      sum_check = 0;
-      for (uint8_t i = 0; i < ctrl_rx_msg_temp.data_len + 6; i++)
-      {
-        sum_check += *(ptr + i);
-      }
-      if (ctrl_rx_msg_temp.check == sum_check && 0x0D == ctrl_rx_msg_temp.tail_1 && 0x0A == ctrl_rx_msg_temp.tail_2)
-      {
-        Ctrl_Msg_Decoding(&ctrl_rx_msg_temp);
-      }
     }
   }
   /* USER CODE END StartTask_WorkFlow */
@@ -635,32 +659,191 @@ void StartTask_PWM(void *argument)
 void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
 {
   Ctrl_Com_Msg ctrl_tx_msg_temp;
+  uint8_t *ptr = &ctrl_tx_msg_temp.head_1;
 
   switch (msg->func_code)
   {
   case GET_DATA:
-    /* code */
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = GET_DATA;
+    ctrl_tx_msg_temp.data_len = 0x0C;
+    ctrl_tx_msg_temp.data[0] = (uint8_t)(g_distance & 0x000000FF);
+    ctrl_tx_msg_temp.data[1] = (uint8_t)((g_distance >> 8) & 0x000000FF);
+    ctrl_tx_msg_temp.data[2] = (uint8_t)((g_distance >> 16) & 0x000000FF);
+    ctrl_tx_msg_temp.data[3] = (uint8_t)((g_distance >> 24) & 0x000000FF);
+    ctrl_tx_msg_temp.data[4] = (uint8_t)(g_tdlas_ppm & 0x000000FF);
+    ctrl_tx_msg_temp.data[5] = (uint8_t)((g_tdlas_ppm >> 8) & 0x000000FF);
+    ctrl_tx_msg_temp.data[6] = (uint8_t)((g_tdlas_ppm >> 16) & 0x000000FF);
+    ctrl_tx_msg_temp.data[7] = (uint8_t)((g_tdlas_ppm >> 24) & 0x000000FF);
+    ctrl_tx_msg_temp.data[8] = (uint8_t)(g_yaw & 0x00FF);
+    ctrl_tx_msg_temp.data[9] = (uint8_t)((g_yaw >> 8) & 0x00FF);
+    ctrl_tx_msg_temp.data[10] = (uint8_t)(g_pitch & 0x00FF);
+    ctrl_tx_msg_temp.data[11] = (uint8_t)((g_pitch >> 8) & 0x00FF);
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     break;
   case MOTION_STATUS:
-    /* code */
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = MOTION_STATUS;
+    ctrl_tx_msg_temp.data_len = 0x01;
+    ctrl_tx_msg_temp.data[0] = g_motion_status;
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     break;
   case RETURN_ZERO:
-    /* code */
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = RETURN_ZERO;
+    ctrl_tx_msg_temp.data_len = 0x01;
+    ctrl_tx_msg_temp.data[0] = 0x01;
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
+    // here need a motor ctrl cmd
     break;
   case ANGLE_AND_SPEED_CMD:
-    /* code */
+    g_yaw_start_dst = msg->data[1];
+    g_yaw_start_dst = (((g_yaw_start_dst << 8) & 0xFF00) | msg->data[0]);
+    g_yaw_end_dst = msg->data[3];
+    g_yaw_end_dst = (((g_yaw_end_dst << 8) & 0xFF00) | msg->data[2]);
+    g_yaw_speed_dst = msg->data[5];
+    g_yaw_speed_dst = (((g_yaw_speed_dst << 8) & 0xFF00) | msg->data[4]);
+    g_pitch_start_dst = msg->data[7];
+    g_pitch_start_dst = (((g_pitch_start_dst << 8) & 0xFF00) | msg->data[6]);
+    g_pitch_end_dst = msg->data[9];
+    g_pitch_end_dst = (((g_pitch_end_dst << 8) & 0xFF00) | msg->data[8]);
+    g_pitch_speed_dst = msg->data[11];
+    g_pitch_speed_dst = (((g_pitch_speed_dst << 8) & 0xFF00) | msg->data[10]);
+    g_motion_mode = 1;
+    g_motion_request = 1;
+
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = ANGLE_AND_SPEED_CMD;
+    ctrl_tx_msg_temp.data_len = 0x01;
+    ctrl_tx_msg_temp.data[0] = 0x01;
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     break;
   case DST_ANGLE_CMD:
-    /* code */
+    g_yaw_end_dst = msg->data[1];
+    g_yaw_end_dst = (((g_yaw_end_dst << 8) & 0xFF00) | msg->data[0]);
+    g_pitch_end_dst = msg->data[3];
+    g_pitch_end_dst = (((g_pitch_end_dst << 8) & 0xFF00) | msg->data[2]);
+    g_motion_mode = 0;
+    g_motion_request = 1;
+
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = DST_ANGLE_CMD;
+    ctrl_tx_msg_temp.data_len = 0x01;
+    ctrl_tx_msg_temp.data[0] = 0x01;
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     break;
   case EMERGENCY_STOP:
-    /* code */
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = EMERGENCY_STOP;
+    ctrl_tx_msg_temp.data_len = 0x01;
+    ctrl_tx_msg_temp.data[0] = 0x01;
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
+    // need send emergency cmd
     break;
   case WIPERS_CTRL:
-    /* code */
+    g_pwm_flag = msg->data[0];
+
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = WIPERS_CTRL;
+    ctrl_tx_msg_temp.data_len = 0x01;
+    ctrl_tx_msg_temp.data[0] = msg->data[0];
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     break;
   case LASER_CTRL:
-    /* code */
+    if (msg->data[0])
+    {
+      g_tdlas_laser_request = 1;
+    }
+    else
+    {
+      g_tdlas_laser_request = 2;
+    }
+
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = LASER_CTRL;
+    ctrl_tx_msg_temp.data_len = 0x01;
+    ctrl_tx_msg_temp.data[0] = msg->data[0];
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     break;
 
   default:

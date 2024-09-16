@@ -20,6 +20,14 @@ static uint16_t g_ctrl_rx_msg_r_index = 0;
 static uint16_t g_ctrl_rx_msg_w_index = 0;
 static Ctrl_Com_Msg g_ctrl_rx_msg_buf[CTRL_RX_MSG_MAX_SIZE];
 
+static uint16_t g_motor_tx_msg_r_index = 0;
+static uint16_t g_motor_tx_msg_w_index = 0;
+static Motor_Tx_Ctrl_Msg g_motor_tx_msg_buf[MOTOR_TX_MSG_MAX_SIZE];
+
+static uint16_t g_motor_rx_msg_r_index = 0;
+static uint16_t g_motor_rx_msg_w_index = 0;
+static Motor_Rx_Ctrl_Msg g_motor_rx_msg_buf[MOTOR_RX_MSG_MAX_SIZE];
+
 int8_t Rangefinder_Msg_Add(Rangefinder_Msg *msg)
 {
     if (((g_rangefinder_msg_w_index + 1) % RANGERFINDER_MSG_MAX_SIZE) == g_rangefinder_msg_r_index)
@@ -237,5 +245,91 @@ int8_t Ctrl_Rx_Msg_Get(Ctrl_Com_Msg *msg)
     msg->tail_1 = g_ctrl_rx_msg_buf[g_ctrl_rx_msg_r_index].tail_1;
     msg->tail_2 = g_ctrl_rx_msg_buf[g_ctrl_rx_msg_r_index].tail_2;
     g_ctrl_rx_msg_r_index = (g_ctrl_rx_msg_r_index + 1) % CTRL_RX_MSG_MAX_SIZE;
+    return 0;
+}
+
+int8_t Motor_Tx_Msg_Add(Motor_Tx_Ctrl_Msg *msg)
+{
+    if (((g_motor_tx_msg_w_index + 1) % MOTOR_TX_MSG_MAX_SIZE) == g_motor_tx_msg_r_index)
+    {
+        return -1;
+    }
+
+    g_motor_tx_msg_buf[g_motor_tx_msg_w_index].head.StdId = msg->head.StdId;
+    g_motor_tx_msg_buf[g_motor_tx_msg_w_index].head.ExtId = msg->head.ExtId;
+    g_motor_tx_msg_buf[g_motor_tx_msg_w_index].head.IDE = msg->head.IDE;
+    g_motor_tx_msg_buf[g_motor_tx_msg_w_index].head.RTR = msg->head.RTR;
+    g_motor_tx_msg_buf[g_motor_tx_msg_w_index].head.DLC = msg->head.DLC;
+    g_motor_tx_msg_buf[g_motor_tx_msg_w_index].head.TransmitGlobalTime = msg->head.TransmitGlobalTime;
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        g_motor_tx_msg_buf[g_motor_tx_msg_w_index].data[i] = msg->data[i];
+    }
+    g_motor_tx_msg_w_index = (g_motor_tx_msg_w_index + 1) % MOTOR_TX_MSG_MAX_SIZE;
+    return 0;
+}
+
+int8_t Motor_Tx_Msg_Get(Motor_Tx_Ctrl_Msg *msg)
+{
+    if (g_motor_tx_msg_r_index == g_motor_tx_msg_w_index)
+    {
+        return -1;
+    }
+
+    msg->head.StdId = g_motor_tx_msg_buf[g_motor_tx_msg_r_index].head.StdId;
+    msg->head.ExtId = g_motor_tx_msg_buf[g_motor_tx_msg_r_index].head.ExtId;
+    msg->head.IDE = g_motor_tx_msg_buf[g_motor_tx_msg_r_index].head.IDE;
+    msg->head.RTR = g_motor_tx_msg_buf[g_motor_tx_msg_r_index].head.RTR;
+    msg->head.DLC = g_motor_tx_msg_buf[g_motor_tx_msg_r_index].head.DLC;
+    msg->head.TransmitGlobalTime = g_motor_tx_msg_buf[g_motor_tx_msg_r_index].head.TransmitGlobalTime;
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        msg->data[i] = g_motor_tx_msg_buf[g_motor_tx_msg_r_index].data[i];
+    }
+    g_motor_tx_msg_r_index = (g_motor_tx_msg_r_index + 1) % MOTOR_TX_MSG_MAX_SIZE;
+    return 0;
+}
+
+int8_t Motor_Rx_Msg_Add(Motor_Rx_Ctrl_Msg *msg)
+{
+    if (((g_motor_rx_msg_w_index + 1) % MOTOR_RX_MSG_MAX_SIZE) == g_motor_rx_msg_r_index)
+    {
+        return -1;
+    }
+
+    g_motor_rx_msg_buf[g_motor_rx_msg_w_index].head.StdId = msg->head.StdId;
+    g_motor_rx_msg_buf[g_motor_rx_msg_w_index].head.ExtId = msg->head.ExtId;
+    g_motor_rx_msg_buf[g_motor_rx_msg_w_index].head.IDE = msg->head.IDE;
+    g_motor_rx_msg_buf[g_motor_rx_msg_w_index].head.RTR = msg->head.RTR;
+    g_motor_rx_msg_buf[g_motor_rx_msg_w_index].head.DLC = msg->head.DLC;
+    g_motor_rx_msg_buf[g_motor_rx_msg_w_index].head.Timestamp = msg->head.Timestamp;
+    g_motor_rx_msg_buf[g_motor_rx_msg_w_index].head.FilterMatchIndex = msg->head.FilterMatchIndex;
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        g_motor_rx_msg_buf[g_motor_rx_msg_w_index].data[i] = msg->data[i];
+    }
+    g_motor_rx_msg_w_index = (g_motor_rx_msg_w_index + 1) % MOTOR_RX_MSG_MAX_SIZE;
+    return 0;
+}
+
+int8_t Motor_Rx_Msg_Get(Motor_Rx_Ctrl_Msg *msg)
+{
+    if (g_motor_rx_msg_r_index == g_motor_rx_msg_w_index)
+    {
+        return -1;
+    }
+
+    msg->head.StdId = g_motor_rx_msg_buf[g_motor_rx_msg_r_index].head.StdId;
+    msg->head.ExtId = g_motor_rx_msg_buf[g_motor_rx_msg_r_index].head.ExtId;
+    msg->head.IDE = g_motor_rx_msg_buf[g_motor_rx_msg_r_index].head.IDE;
+    msg->head.RTR = g_motor_rx_msg_buf[g_motor_rx_msg_r_index].head.RTR;
+    msg->head.DLC = g_motor_rx_msg_buf[g_motor_rx_msg_r_index].head.DLC;
+    msg->head.Timestamp = g_motor_rx_msg_buf[g_motor_rx_msg_r_index].head.Timestamp;
+    msg->head.FilterMatchIndex = g_motor_rx_msg_buf[g_motor_rx_msg_r_index].head.FilterMatchIndex;
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        msg->data[i] = g_motor_rx_msg_buf[g_motor_rx_msg_r_index].data[i];
+    }
+    g_motor_rx_msg_r_index = (g_motor_rx_msg_r_index + 1) % MOTOR_RX_MSG_MAX_SIZE;
     return 0;
 }

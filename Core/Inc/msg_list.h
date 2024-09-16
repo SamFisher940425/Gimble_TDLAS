@@ -64,6 +64,18 @@ extern "C"
         uint8_t tail_2;
     } Ctrl_Com_Msg;
 
+    typedef struct
+    {
+        CAN_TxHeaderTypeDef head;
+        uint8_t data[8];
+    } Motor_Tx_Ctrl_Msg;
+
+    typedef struct
+    {
+        CAN_RxHeaderTypeDef head;
+        uint8_t data[8];
+    } Motor_Rx_Ctrl_Msg;
+
     int8_t Rangefinder_Msg_Add(Rangefinder_Msg *msg);
     int8_t Rangerfinder_Msg_Get(Rangefinder_Msg *msg);
 
@@ -76,6 +88,11 @@ extern "C"
     int8_t Ctrl_Tx_Msg_Get(Ctrl_Com_Msg *msg);
     int8_t Ctrl_Rx_Msg_Add(Ctrl_Com_Msg *msg);
     int8_t Ctrl_Rx_Msg_Get(Ctrl_Com_Msg *msg);
+
+    int8_t Motor_Tx_Msg_Add(Motor_Tx_Ctrl_Msg *msg);
+    int8_t Motor_Tx_Msg_Get(Motor_Tx_Ctrl_Msg *msg);
+    int8_t Motor_Rx_Msg_Add(Motor_Rx_Ctrl_Msg *msg);
+    int8_t Motor_Rx_Msg_Get(Motor_Rx_Ctrl_Msg *msg);
 
 #ifdef __cplusplus
 }

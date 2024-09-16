@@ -271,7 +271,7 @@ void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
     /* code */
     break;
   case HAL_UART_RXEVENT_IDLE:
-    if (g_rs485_c1_rx_buf[0] == 0x55 && g_rs485_c1_rx_buf[1] == 0xAA)
+    if (g_rs485_c1_rx_buf[0] == CTRL_MSG_HEAD_1 && g_rs485_c1_rx_buf[1] == CTRL_MSG_HEAD_2)
     {
       msg_temp.head_1 = g_rs485_c1_rx_buf[0];
       msg_temp.head_2 = g_rs485_c1_rx_buf[1];
@@ -425,10 +425,23 @@ void CAN_Filter_Config(void)
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
   HAL_StatusTypeDef status = HAL_TIMEOUT;
+  Motor_Rx_Ctrl_Msg motor_rx_msg_temp;
 
   status = HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &g_can_rx_message_head, (uint8_t *)g_can_rx_data);
   if (status == HAL_OK)
   {
+    motor_rx_msg_temp.head.StdId = g_can_rx_message_head.StdId;
+    motor_rx_msg_temp.head.ExtId = g_can_rx_message_head.ExtId;
+    motor_rx_msg_temp.head.IDE = g_can_rx_message_head.IDE;
+    motor_rx_msg_temp.head.RTR = g_can_rx_message_head.RTR;
+    motor_rx_msg_temp.head.DLC = g_can_rx_message_head.DLC;
+    motor_rx_msg_temp.head.Timestamp = g_can_rx_message_head.Timestamp;
+    motor_rx_msg_temp.head.FilterMatchIndex = g_can_rx_message_head.FilterMatchIndex;
+    for (uint8_t i = 0; i < 8; i++)
+    {
+      motor_rx_msg_temp.data[i] = g_can_rx_data[i];
+    }
+    Motor_Rx_Msg_Add(&motor_rx_msg_temp);
   }
 }
 /* USER CODE END 4 */

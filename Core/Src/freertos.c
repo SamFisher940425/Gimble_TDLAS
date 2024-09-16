@@ -292,9 +292,13 @@ void StartTask_485C1TR(void *argument)
   {
     xLastWakeTime = osKernelGetTickCount();
     osDelayUntil(xLastWakeTime + 5);
-    if (HAL_UARTEx_ReceiveToIdle_DMA(&huart3, (uint8_t *)g_rs485_c1_rx_buf, RS485_C1_RX_DATA_LENGTH) == HAL_OK)
+
+    if (0 == g_rs485_c1_state)
     {
-      g_rs485_c1_state = 1;
+      if (HAL_UARTEx_ReceiveToIdle_DMA(&huart3, (uint8_t *)g_rs485_c1_rx_buf, RS485_C1_RX_DATA_LENGTH) == HAL_OK)
+      {
+        g_rs485_c1_state = 1;
+      }
     }
   }
   /* USER CODE END StartTask_485C1TR */
@@ -326,6 +330,7 @@ void StartTask_485C2TR(void *argument)
       if (timeout_cnt >= 8) // 40ms timeout
       {
         HAL_UART_AbortReceive(&huart2);
+        RS485_Status_Set(RS485_CH2, RS485_WRITE);
         g_rs485_c2_state = 0;
         timeout_cnt = 0;
       }
@@ -341,8 +346,6 @@ void StartTask_485C2TR(void *argument)
       {
         if (0x03 == tdlas_tx_msg_temp.func_code)
         {
-          RS485_Status_Set(RS485_CH2, RS485_WRITE);
-          osDelay(1);
           g_rs485_c2_tx_buf[0] = tdlas_tx_msg_temp.addr;
           g_rs485_c2_tx_buf[1] = tdlas_tx_msg_temp.func_code;
           g_rs485_c2_tx_buf[2] = (tdlas_tx_msg_temp.reg_addr >> 8) & 0x00FF;
@@ -359,8 +362,6 @@ void StartTask_485C2TR(void *argument)
         }
         else if (0x10 == tdlas_tx_msg_temp.func_code)
         {
-          RS485_Status_Set(RS485_CH2, RS485_WRITE);
-          osDelay(1);
           g_rs485_c2_tx_buf[0] = tdlas_tx_msg_temp.addr;
           g_rs485_c2_tx_buf[1] = tdlas_tx_msg_temp.func_code;
           g_rs485_c2_tx_buf[2] = (tdlas_tx_msg_temp.reg_addr >> 8) & 0x00FF;
@@ -439,7 +440,7 @@ void StartTask_WorkFlow(void *argument)
       period_cnt = 0;
     }
 
-    if (0 == Rangerfinder_Msg_Get(&range_msg_temp))
+    if (0 == Rangerfinder_Msg_Get(&range_msg_temp)) // distance decode
     {
       if (0x03 == range_msg_temp.func_code && 0x04 == range_msg_temp.data_len)
       {
@@ -454,7 +455,7 @@ void StartTask_WorkFlow(void *argument)
       }
     }
 
-    if (period_cnt % 10 == 0) // 5ms * 10 = 50ms
+    if (period_cnt % 10 == 0) // 5ms * 10 = 50ms send tdlas measure cmd
     {
       tdlas_tx_msg_temp.addr = 0x01;
       tdlas_tx_msg_temp.func_code = 0x03;
@@ -465,7 +466,7 @@ void StartTask_WorkFlow(void *argument)
       TDLAS_Tx_Msg_Add(&tdlas_tx_msg_temp);
     }
 
-    if (1 == g_tdlas_laser_request) // open
+    if (1 == g_tdlas_laser_request) // send open tdlas laser cmd
     {
       tdlas_tx_msg_temp.addr = 0x01;
       tdlas_tx_msg_temp.func_code = 0x10;
@@ -479,7 +480,7 @@ void StartTask_WorkFlow(void *argument)
       TDLAS_Tx_Msg_Add(&tdlas_tx_msg_temp);
       g_tdlas_laser_request = 0;
     }
-    else if (2 == g_tdlas_laser_request) // close
+    else if (2 == g_tdlas_laser_request) // send close tdlas laser cmd
     {
       tdlas_tx_msg_temp.addr = 0x01;
       tdlas_tx_msg_temp.func_code = 0x10;
@@ -494,7 +495,7 @@ void StartTask_WorkFlow(void *argument)
       g_tdlas_laser_request = 0;
     }
 
-    if (0 == TDLAS_Rx_Msg_Get(&tdlas_rx_msg_temp))
+    if (0 == TDLAS_Rx_Msg_Get(&tdlas_rx_msg_temp)) // tdlas decode
     {
       uint8_t data_buf_temp[16] = {0};
       if (0x03 == tdlas_rx_msg_temp.func_code && 0x04 == tdlas_rx_msg_temp.data_len)

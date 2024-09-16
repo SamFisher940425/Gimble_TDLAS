@@ -54,11 +54,11 @@
 volatile uint8_t g_rs232_rx_state = 0;
 volatile uint8_t g_rs232_rx_buf[RS232_RX_DATA_LENGTH] = {0};
 
-volatile uint8_t g_rs485_c1_state = 0;
+volatile uint8_t g_rs485_c1_state = 0; // 0 idle 1 receiving 2 sending
 volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH] = {0};
 volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH] = {0};
 
-volatile uint8_t g_rs485_c2_state = 0;
+volatile uint8_t g_rs485_c2_state = 0; // 0 idle 1 sending 2 receiving
 volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH] = {0};
 volatile uint8_t g_rs485_c2_rx_buf[RS485_C2_RX_DATA_LENGTH] = {0};
 
@@ -132,7 +132,7 @@ int main(void)
   HAL_UART_RegisterRxEventCallback(&huart1, RS232_RxEventCallBack);
 
   HAL_UART_RegisterCallback(&huart3, HAL_UART_TX_COMPLETE_CB_ID, RS485_C1_TxCpltCallback);
-  HAL_UART_RegisterRxEventCallback(&huart2, RS485_C1_RxEventCallBack);
+  HAL_UART_RegisterRxEventCallback(&huart3, RS485_C1_RxEventCallBack);
   RS485_Status_Set(RS485_CH1, RS485_READ);
 
   HAL_UART_RegisterCallback(&huart2, HAL_UART_TX_COMPLETE_CB_ID, RS485_C2_TxCpltCallback);
@@ -252,17 +252,63 @@ void RS232_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
 
 void RS485_C1_TxCpltCallback(UART_HandleTypeDef *huart)
 {
+  RS485_Status_Set(RS485_CH1, RS485_READ);
+  g_rs485_c1_state = 0;
 }
 
 void RS485_C1_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
 {
+  HAL_UART_RxEventTypeTypeDef event_type = 3; // set a invalid value temp
+  Ctrl_Com_Msg msg_temp;
+
+  switch (event_type)
+  {
+  case HAL_UART_RXEVENT_TC:
+    RS485_Status_Set(RS485_CH1, RS485_READ);
+    g_rs485_c1_state = 0;
+    break;
+  case HAL_UART_RXEVENT_HT:
+    /* code */
+    break;
+  case HAL_UART_RXEVENT_IDLE:
+    if (g_rs485_c1_rx_buf[0] == 0x55 && g_rs485_c1_rx_buf[1] = 0xAA)
+    {
+      msg_temp.head_1 = g_rs485_c1_rx_buf[0];
+      msg_temp.head_2 = g_rs485_c1_rx_buf[1];
+      msg_temp.src_id = g_rs485_c1_rx_buf[2];
+      msg_temp.dst_id = g_rs485_c1_rx_buf[3];
+      msg_temp.func_code = g_rs485_c1_rx_buf[4];
+      msg_temp.data_len = g_rs485_c1_rx_buf[5];
+      for (uint8_t i = 0; i < msg_temp.data_len; i++)
+      {
+        msg_temp.data[i] = g_rs485_c1_rx_buf[i + 6];
+      }
+      msg_temp.check = g_rs485_c1_rx_buf[msg_temp.data_len + 6];
+      msg_temp.tail_1 = g_rs485_c1_rx_buf[msg_temp.data_len + 7];
+      msg_temp.tail_2 = g_rs485_c1_rx_buf[msg_temp.data_len + 8];
+      Ctrl_Rx_Msg_Add(&msg_temp);
+      g_rs485_c1_state = 2;
+      HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
+    }
+    else
+    {
+      RS485_Status_Set(RS485_CH1, RS485_READ);
+      g_rs485_c1_state = 0;
+    }
+    break;
+
+  default:
+    break;
+  }
 }
 
 void RS485_C2_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   RS485_Status_Set(RS485_CH2, RS485_READ);
-  HAL_UARTEx_ReceiveToIdle_DMA(huart, (uint8_t *)g_rs485_c2_rx_buf, RS485_C2_RX_DATA_LENGTH);
-  g_rs485_c2_state = 2;
+  if (HAL_UARTEx_ReceiveToIdle_DMA(huart, (uint8_t *)g_rs485_c2_rx_buf, RS485_C2_RX_DATA_LENGTH) == HAL_OK)
+  {
+    g_rs485_c2_state = 2;
+  }
 }
 
 void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
@@ -274,6 +320,7 @@ void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
   switch (event_type)
   {
   case HAL_UART_RXEVENT_TC:
+    RS485_Status_Set(RS485_CH2, RS485_WRITE);
     g_rs485_c2_state = 0;
     break;
   case HAL_UART_RXEVENT_HT:
@@ -302,8 +349,9 @@ void RS485_C2_RxEventCallBack(UART_HandleTypeDef *huart, uint16_t Pos)
       msg_temp.crc_h = g_rs485_c2_rx_buf[7];
     }
     TDLAS_Rx_Msg_Add(&msg_temp);
-    HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
+    RS485_Status_Set(RS485_CH2, RS485_WRITE);
     g_rs485_c2_state = 0;
+    HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
     break;
 
   default:

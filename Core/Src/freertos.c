@@ -68,12 +68,12 @@ extern volatile uint8_t g_rs485_c1_state;
 extern volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH];
 extern volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH];
 uint8_t g_gimble_id = 1;
-uint16_t g_pitch_start_dst = 0;
-uint16_t g_pitch_end_dst = 0;
-uint16_t g_pitch_speed_dst = 0;
-uint16_t g_yaw_start_dst = 0;
-uint16_t g_yaw_end_dst = 0;
-uint16_t g_yaw_speed_dst = 0;
+uint16_t g_pitch_start_dst = 0; // 0.1 degree
+uint16_t g_pitch_end_dst = 0; // 0.1 degree
+uint16_t g_pitch_speed_dst = 0; // deg/s
+uint16_t g_yaw_start_dst = 0; // 0.1 degree
+uint16_t g_yaw_end_dst = 0; // 0.1 degree
+uint16_t g_yaw_speed_dst = 0; // deg/s
 uint8_t g_motion_mode = 0; // 0 dst point mode 1 start-end-speed mode
 uint8_t g_motion_request = 0;
 
@@ -87,9 +87,11 @@ extern CAN_TxHeaderTypeDef g_can_tx_message_head;
 extern volatile uint8_t g_can_tx_data[8];
 extern CAN_RxHeaderTypeDef g_can_rx_message_head;
 extern volatile uint8_t g_can_rx_data[8];
-uint16_t g_yaw = 0;
-uint16_t g_pitch = 0;
+uint16_t g_yaw = 0; // 0.1 degree
+uint16_t g_pitch = 0; // 0.1 degree
 uint8_t g_motion_status = 0;
+int32_t g_yaw_raw = 0; // encoder raw data
+int32_t g_pitch_raw = 0; // encoder raw data
 
 volatile uint16_t g_pwm_min = 1000;
 volatile uint16_t g_pwm_mid = 1500;
@@ -481,6 +483,7 @@ void StartTask_WorkFlow(void *argument)
   TDLAS_Tx_Msg tdlas_tx_msg_temp;
   TDLAS_Rx_Msg tdlas_rx_msg_temp;
   Ctrl_Com_Msg ctrl_rx_msg_temp;
+  Motor_Rx_Ctrl_Msg motor_rx_msg_temp;
   uint16_t crc16_check = 0;
   uint8_t sum_check = 0;
   /* Infinite loop */
@@ -492,6 +495,16 @@ void StartTask_WorkFlow(void *argument)
     if (period_cnt >= 4294967250)
     {
       period_cnt = 0;
+    }
+
+    if (0 == Motor_Rx_Msg_Get(&motor_rx_msg_temp))
+    {
+      if (0x181 == motor_rx_msg_temp.head.StdId) // pitch
+      {
+      }
+      else if (0x182 == motor_rx_msg_temp.head.StdId) // yaw
+      {
+      }
     }
 
     if (0 == Rangerfinder_Msg_Get(&range_msg_temp)) // distance decode

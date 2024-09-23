@@ -69,12 +69,12 @@ extern volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH];
 extern volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH];
 uint8_t g_gimble_id = 1;
 uint16_t g_pitch_start_dst = 0; // 0.1 degree
-uint16_t g_pitch_end_dst = 0; // 0.1 degree
+uint16_t g_pitch_end_dst = 0;   // 0.1 degree
 uint16_t g_pitch_speed_dst = 0; // deg/s
-uint16_t g_yaw_start_dst = 0; // 0.1 degree
-uint16_t g_yaw_end_dst = 0; // 0.1 degree
-uint16_t g_yaw_speed_dst = 0; // deg/s
-uint8_t g_motion_mode = 0; // 0 dst point mode 1 start-end-speed mode
+uint16_t g_yaw_start_dst = 0;   // 0.1 degree
+uint16_t g_yaw_end_dst = 0;     // 0.1 degree
+uint16_t g_yaw_speed_dst = 0;   // deg/s
+uint8_t g_motion_mode = 0;      // 0 dst point mode 1 start-end-speed mode
 uint8_t g_motion_request = 0;
 
 extern volatile uint8_t g_rs485_c2_state;
@@ -87,11 +87,14 @@ extern CAN_TxHeaderTypeDef g_can_tx_message_head;
 extern volatile uint8_t g_can_tx_data[8];
 extern CAN_RxHeaderTypeDef g_can_rx_message_head;
 extern volatile uint8_t g_can_rx_data[8];
-uint16_t g_yaw = 0; // 0.1 degree
+uint16_t g_yaw = 0;   // 0.1 degree
 uint16_t g_pitch = 0; // 0.1 degree
 uint8_t g_motion_status = 0;
-int32_t g_yaw_raw = 0; // encoder raw data
+int32_t g_yaw_raw = 0;   // encoder raw data
 int32_t g_pitch_raw = 0; // encoder raw data
+int16_t g_pitch_speed_raw = 0;
+int16_t g_yaw_speed_raw = 0;
+uint8_t g_motor_init_flag = 0;
 
 volatile uint16_t g_pwm_min = 1000;
 volatile uint16_t g_pwm_mid = 1500;
@@ -499,11 +502,51 @@ void StartTask_WorkFlow(void *argument)
 
     if (0 == Motor_Rx_Msg_Get(&motor_rx_msg_temp))
     {
-      if (0x181 == motor_rx_msg_temp.head.StdId) // pitch
+      switch (motor_rx_msg_temp.head.StdId)
       {
-      }
-      else if (0x182 == motor_rx_msg_temp.head.StdId) // yaw
-      {
+      case 0x181: // pitch TPDO1
+        if ((1 == (motor_rx_msg_temp.data[1] >> 2) & 0x01))
+        {
+          g_motion_status &= ~(0x01);
+        }
+        else
+        {
+          g_motion_status |= 0x01;
+        }
+
+        g_pitch_speed_raw = motor_rx_msg_temp.data[2];
+        g_pitch_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
+
+        g_pitch_raw = motor_rx_msg_temp.data[4];
+        g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[5] << 8) & 0x0000FF00);
+        g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[6] << 16) & 0x00FF0000);
+        g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[7] << 24) & 0xFF000000);
+        break;
+      case 0x182: // yaw TPDO1
+        if ((1 == (motor_rx_msg_temp.data[1] >> 2) & 0x01))
+        {
+          g_motion_status &= ~(0x02);
+        }
+        else
+        {
+          g_motion_status |= 0x02;
+        }
+
+        g_yaw_speed_raw = motor_rx_msg_temp.data[2];
+        g_yaw_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
+
+        g_yaw_raw = motor_rx_msg_temp.data[4];
+        g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[5] << 8) & 0x0000FF00);
+        g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[6] << 16) & 0x00FF0000);
+        g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[7] << 24) & 0xFF000000);
+        break;
+      case 0x581: // pitch SDO
+        break;
+      case 0x582: // yaw SDO
+        break;
+
+      default:
+        break;
       }
     }
 

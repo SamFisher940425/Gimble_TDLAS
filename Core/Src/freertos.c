@@ -25,6 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "stdlib.h"
 #include "iwdg.h"
 #include "usart.h"
 #include "can.h"
@@ -76,6 +77,13 @@ uint16_t g_yaw_end_dst = 0;     // 0.1 degree
 uint16_t g_yaw_speed_dst = 0;   // deg/s
 uint8_t g_motion_mode = 0;      // 0 dst point mode 1 start-end-speed mode
 uint8_t g_motion_request = 0;
+uint8_t g_motion_step = 0;
+int32_t g_pitch_start_dst_raw = 0; // encoder raw data
+int32_t g_pitch_end_dst_raw = 0;   // encoder raw data
+int16_t g_pitch_speed_dst_raw = 0; // encoder raw data
+int32_t g_yaw_start_dst_raw = 0;   // encoder raw data
+int32_t g_yaw_end_dst_raw = 0;     // encoder raw data
+int16_t g_yaw_speed_dst_raw = 0;   // encoder raw data
 
 extern volatile uint8_t g_rs485_c2_state;
 extern volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH];
@@ -87,14 +95,15 @@ extern CAN_TxHeaderTypeDef g_can_tx_message_head;
 extern volatile uint8_t g_can_tx_data[8];
 extern CAN_RxHeaderTypeDef g_can_rx_message_head;
 extern volatile uint8_t g_can_rx_data[8];
-uint16_t g_yaw = 0;   // 0.1 degree
-uint16_t g_pitch = 0; // 0.1 degree
-uint8_t g_motion_status = 0;
-int32_t g_yaw_raw = 0;   // encoder raw data
-int32_t g_pitch_raw = 0; // encoder raw data
+uint16_t g_yaw = 0;          // 0.1 degree
+uint16_t g_pitch = 0;        // 0.1 degree
+uint8_t g_motion_status = 0; // bit0 pitch motion status bit1 yaw motion status
+int32_t g_yaw_raw = 0;       // encoder raw data
+int32_t g_pitch_raw = 0;     // encoder raw data
 int16_t g_pitch_speed_raw = 0;
 int16_t g_yaw_speed_raw = 0;
-uint8_t g_motor_init_flag = 0;
+uint16_t g_stop_speed_th = 10;
+uint8_t g_motor_init_flag = 0; // 0 not init 1 finished init
 
 volatile uint16_t g_pwm_min = 1000;
 volatile uint16_t g_pwm_mid = 1500;
@@ -162,6 +171,8 @@ const osThreadAttr_t myTask_PWM_attributes = {
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg);
+void Motor_Init(void);
+void Motor_Motion_Ctrl(void);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -251,6 +262,10 @@ void StartDefaultTask(void *argument)
   {
     osDelay(500);
     HAL_GPIO_TogglePin(LED_2_GPIO_Port, LED_2_Pin);
+    if (0 == g_motor_init_flag)
+    {
+      Motor_Init();
+    }
   }
   /* USER CODE END StartDefaultTask */
 }
@@ -517,10 +532,17 @@ void StartTask_WorkFlow(void *argument)
         g_pitch_speed_raw = motor_rx_msg_temp.data[2];
         g_pitch_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
 
+        if ((0 != (g_motion_status & 0x01)) && abs(g_pitch_speed_raw) < g_stop_speed_th)
+        {
+          g_motion_status &= ~(0x01);
+        }
+
         g_pitch_raw = motor_rx_msg_temp.data[4];
         g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[5] << 8) & 0x0000FF00);
         g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[6] << 16) & 0x00FF0000);
         g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[7] << 24) & 0xFF000000);
+
+        // here need trans raw pitch to degree pitch
         break;
       case 0x182: // yaw TPDO1
         if ((1 == (motor_rx_msg_temp.data[1] >> 2) & 0x01))
@@ -535,10 +557,17 @@ void StartTask_WorkFlow(void *argument)
         g_yaw_speed_raw = motor_rx_msg_temp.data[2];
         g_yaw_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
 
+        if ((0 != (g_motion_status & 0x02)) && abs(g_yaw_speed_raw) < g_stop_speed_th)
+        {
+          g_motion_status &= ~(0x02);
+        }
+
         g_yaw_raw = motor_rx_msg_temp.data[4];
         g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[5] << 8) & 0x0000FF00);
         g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[6] << 16) & 0x00FF0000);
         g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[7] << 24) & 0xFF000000);
+
+        // here need trans raw yaw to degree yaw
         break;
       case 0x581: // pitch SDO
         break;
@@ -614,6 +643,22 @@ void StartTask_WorkFlow(void *argument)
       tdlas_tx_msg_temp.crc_l = 0x95;
       tdlas_tx_msg_temp.crc_h = 0xCB;
       TDLAS_Tx_Msg_Add(&tdlas_tx_msg_temp);
+    }
+
+    if (0 != g_motion_request)
+    {
+      if (g_motor_init_flag)
+      {
+        Motor_Motion_Ctrl();
+      }
+      else
+      {
+        g_motion_request = 0;
+      }
+    }
+    else
+    {
+      g_motion_step = 0;
     }
 
     if (1 == g_tdlas_laser_request) // send open tdlas laser cmd
@@ -716,6 +761,7 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
 {
   Ctrl_Com_Msg ctrl_tx_msg_temp;
   uint8_t *ptr = &ctrl_tx_msg_temp.head_1;
+  Motor_Tx_Ctrl_Msg motor_tx_msg_temp;
 
   switch (msg->func_code)
   {
@@ -755,6 +801,10 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     ctrl_tx_msg_temp.func_code = MOTION_STATUS;
     ctrl_tx_msg_temp.data_len = 0x01;
     ctrl_tx_msg_temp.data[0] = g_motion_status;
+    if (0 == g_motion_status && 0 != g_motion_request) // avoid report stop status when consecutive movement
+    {
+      ctrl_tx_msg_temp.data[0] = 0x03;
+    }
     ctrl_tx_msg_temp.check = 0;
     for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
     {
@@ -781,22 +831,48 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
     Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     // here need a motor ctrl cmd
+    if (g_motor_init_flag)
+    {
+      motor_tx_msg_temp.head.StdId = 0x601;
+      motor_tx_msg_temp.head.ExtId = 0x601;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x2B;
+      motor_tx_msg_temp.data[1] = 0x09;
+      motor_tx_msg_temp.data[2] = 0x20;
+      motor_tx_msg_temp.data[3] = 0x00;
+      motor_tx_msg_temp.data[4] = 0x01;
+      motor_tx_msg_temp.data[5] = 0x00;
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x602;
+      motor_tx_msg_temp.head.ExtId = 0x602;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    }
     break;
   case ANGLE_AND_SPEED_CMD:
-    g_yaw_start_dst = msg->data[1];
-    g_yaw_start_dst = (((g_yaw_start_dst << 8) & 0xFF00) | msg->data[0]);
-    g_yaw_end_dst = msg->data[3];
-    g_yaw_end_dst = (((g_yaw_end_dst << 8) & 0xFF00) | msg->data[2]);
-    g_yaw_speed_dst = msg->data[5];
-    g_yaw_speed_dst = (((g_yaw_speed_dst << 8) & 0xFF00) | msg->data[4]);
-    g_pitch_start_dst = msg->data[7];
-    g_pitch_start_dst = (((g_pitch_start_dst << 8) & 0xFF00) | msg->data[6]);
-    g_pitch_end_dst = msg->data[9];
-    g_pitch_end_dst = (((g_pitch_end_dst << 8) & 0xFF00) | msg->data[8]);
-    g_pitch_speed_dst = msg->data[11];
-    g_pitch_speed_dst = (((g_pitch_speed_dst << 8) & 0xFF00) | msg->data[10]);
-    g_motion_mode = 1;
-    g_motion_request = 1;
+    if (0 == g_motion_request)
+    {
+      g_yaw_start_dst = msg->data[1];
+      g_yaw_start_dst = (((g_yaw_start_dst << 8) & 0xFF00) | msg->data[0]);
+      g_yaw_end_dst = msg->data[3];
+      g_yaw_end_dst = (((g_yaw_end_dst << 8) & 0xFF00) | msg->data[2]);
+      g_yaw_speed_dst = msg->data[5];
+      g_yaw_speed_dst = (((g_yaw_speed_dst << 8) & 0xFF00) | msg->data[4]);
+      g_pitch_start_dst = msg->data[7];
+      g_pitch_start_dst = (((g_pitch_start_dst << 8) & 0xFF00) | msg->data[6]);
+      g_pitch_end_dst = msg->data[9];
+      g_pitch_end_dst = (((g_pitch_end_dst << 8) & 0xFF00) | msg->data[8]);
+      g_pitch_speed_dst = msg->data[11];
+      g_pitch_speed_dst = (((g_pitch_speed_dst << 8) & 0xFF00) | msg->data[10]);
+      g_motion_mode = 1;
+      g_motion_request = 1;
+
+      // here nedd trans dst angle to dst raw angle
+    }
 
     ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
     ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
@@ -815,12 +891,15 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     break;
   case DST_ANGLE_CMD:
-    g_yaw_end_dst = msg->data[1];
-    g_yaw_end_dst = (((g_yaw_end_dst << 8) & 0xFF00) | msg->data[0]);
-    g_pitch_end_dst = msg->data[3];
-    g_pitch_end_dst = (((g_pitch_end_dst << 8) & 0xFF00) | msg->data[2]);
-    g_motion_mode = 0;
-    g_motion_request = 1;
+    if (0 == g_motion_request)
+    {
+      g_yaw_end_dst = msg->data[1];
+      g_yaw_end_dst = (((g_yaw_end_dst << 8) & 0xFF00) | msg->data[0]);
+      g_pitch_end_dst = msg->data[3];
+      g_pitch_end_dst = (((g_pitch_end_dst << 8) & 0xFF00) | msg->data[2]);
+      g_motion_mode = 0;
+      g_motion_request = 1;
+    }
 
     ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
     ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
@@ -855,6 +934,24 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
     Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     // need send emergency cmd
+    motor_tx_msg_temp.head.StdId = 0x601;
+    motor_tx_msg_temp.head.ExtId = 0x601;
+    motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+    motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+    motor_tx_msg_temp.head.DLC = 6;
+    motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+    motor_tx_msg_temp.data[0] = 0x2B;
+    motor_tx_msg_temp.data[1] = 0x03;
+    motor_tx_msg_temp.data[2] = 0x20;
+    motor_tx_msg_temp.data[3] = 0x00;
+    motor_tx_msg_temp.data[4] = 0x01;
+    motor_tx_msg_temp.data[5] = 0x00;
+    motor_tx_msg_temp.data[6] = 0x00;
+    motor_tx_msg_temp.data[7] = 0x00;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    motor_tx_msg_temp.head.StdId = 0x602;
+    motor_tx_msg_temp.head.ExtId = 0x602;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
     break;
   case WIPERS_CTRL:
     g_pwm_flag = msg->data[0];
@@ -904,6 +1001,271 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
 
   default:
     break;
+  }
+}
+
+void Motor_Init(void)
+{
+  static uint8_t step = 0;
+  Motor_Tx_Ctrl_Msg motor_tx_msg_temp;
+
+  switch (step)
+  {
+  case 0:
+    motor_tx_msg_temp.head.StdId = 0x0000;
+    motor_tx_msg_temp.head.ExtId = 0x0000;
+    motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+    motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+    motor_tx_msg_temp.head.DLC = 2;
+    motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+    motor_tx_msg_temp.data[0] = 0x01;
+    motor_tx_msg_temp.data[1] = 0x00;
+    motor_tx_msg_temp.data[2] = 0x00;
+    motor_tx_msg_temp.data[3] = 0x00;
+    motor_tx_msg_temp.data[4] = 0x00;
+    motor_tx_msg_temp.data[5] = 0x00;
+    motor_tx_msg_temp.data[6] = 0x00;
+    motor_tx_msg_temp.data[7] = 0x00;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    step++;
+    break;
+  case 1:
+    motor_tx_msg_temp.head.StdId = 0x201;
+    motor_tx_msg_temp.head.ExtId = 0x201;
+    motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+    motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+    motor_tx_msg_temp.head.DLC = 6;
+    motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+    motor_tx_msg_temp.data[0] = 0x06;
+    motor_tx_msg_temp.data[1] = 0x00;
+    motor_tx_msg_temp.data[2] = 0x00;
+    motor_tx_msg_temp.data[3] = 0x00;
+    motor_tx_msg_temp.data[4] = 0x00;
+    motor_tx_msg_temp.data[5] = 0x00;
+    motor_tx_msg_temp.data[6] = 0x00;
+    motor_tx_msg_temp.data[7] = 0x00;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    motor_tx_msg_temp.head.StdId = 0x202;
+    motor_tx_msg_temp.head.ExtId = 0x202;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    step++;
+    break;
+  case 2:
+    motor_tx_msg_temp.head.StdId = 0x201;
+    motor_tx_msg_temp.head.ExtId = 0x201;
+    motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+    motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+    motor_tx_msg_temp.head.DLC = 6;
+    motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+    motor_tx_msg_temp.data[0] = 0x07;
+    motor_tx_msg_temp.data[1] = 0x00;
+    motor_tx_msg_temp.data[2] = 0x00;
+    motor_tx_msg_temp.data[3] = 0x00;
+    motor_tx_msg_temp.data[4] = 0x00;
+    motor_tx_msg_temp.data[5] = 0x00;
+    motor_tx_msg_temp.data[6] = 0x00;
+    motor_tx_msg_temp.data[7] = 0x00;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    motor_tx_msg_temp.head.StdId = 0x202;
+    motor_tx_msg_temp.head.ExtId = 0x202;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    step = 0;
+    g_motor_init_flag = 1;
+    break;
+
+  default:
+    break;
+  }
+}
+
+void Motor_Motion_Ctrl(void)
+{
+  static uint32_t wait_cnt = 0;
+  Motor_Tx_Ctrl_Msg motor_tx_msg_temp;
+
+  if (g_motion_mode)
+  {
+    switch (g_motion_step)
+    {
+    case 0:
+      // enable motor first
+      motor_tx_msg_temp.head.StdId = 0x201;
+      motor_tx_msg_temp.head.ExtId = 0x201;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x07;
+      motor_tx_msg_temp.data[1] = 0x00;
+      motor_tx_msg_temp.data[2] = 0x00;
+      motor_tx_msg_temp.data[3] = 0x00;
+      motor_tx_msg_temp.data[4] = 0x00;
+      motor_tx_msg_temp.data[5] = 0x00;
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x202;
+      motor_tx_msg_temp.head.ExtId = 0x202;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      g_motion_step++;
+      break;
+    case 1:
+      motor_tx_msg_temp.head.StdId = 0x201; // pitch
+      motor_tx_msg_temp.head.ExtId = 0x201;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x5F;
+      motor_tx_msg_temp.data[1] = 0x00;
+      motor_tx_msg_temp.data[2] = (g_pitch_start_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_pitch_start_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_pitch_start_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_pitch_start_dst_raw >> 24) & 0x000000FF);
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x202; // yaw
+      motor_tx_msg_temp.head.ExtId = 0x202;
+      motor_tx_msg_temp.data[2] = (g_yaw_start_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_yaw_start_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_yaw_start_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_yaw_start_dst_raw >> 24) & 0x000000FF);
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      wait_cnt = 0;
+      g_motion_step++;
+      break;
+    case 2:
+      wait_cnt++;
+      if (wait_cnt >= 10)
+      {
+        wait_cnt = 0;
+        g_motion_step++;
+      }
+      break;
+    case 3:
+      if (0 == g_motion_status)
+      {
+        g_motion_step++;
+      }
+      break;
+    case 4:
+      motor_tx_msg_temp.head.StdId = 0x201; // pitch
+      motor_tx_msg_temp.head.ExtId = 0x201;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x5F;
+      motor_tx_msg_temp.data[1] = 0x00;
+      motor_tx_msg_temp.data[2] = (g_pitch_end_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_pitch_end_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_pitch_end_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_pitch_end_dst_raw >> 24) & 0x000000FF);
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x202; // yaw
+      motor_tx_msg_temp.head.ExtId = 0x202;
+      motor_tx_msg_temp.data[2] = (g_yaw_end_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_yaw_end_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_yaw_end_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_yaw_end_dst_raw >> 24) & 0x000000FF);
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      wait_cnt = 0;
+      g_motion_step++;
+      break;
+    case 5:
+      wait_cnt++;
+      if (wait_cnt >= 10)
+      {
+        wait_cnt = 0;
+        g_motion_step++;
+      }
+      break;
+    case 6:
+      if (0 == g_motion_status)
+      {
+        g_motion_step = 0;
+        g_motion_request = 0;
+      }
+      break;
+
+    default:
+      break;
+    }
+  }
+  else // dst angle ctrl
+  {
+    switch (g_motion_step)
+    {
+    case 0:
+      // enable motor first
+      motor_tx_msg_temp.head.StdId = 0x201;
+      motor_tx_msg_temp.head.ExtId = 0x201;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x07;
+      motor_tx_msg_temp.data[1] = 0x00;
+      motor_tx_msg_temp.data[2] = 0x00;
+      motor_tx_msg_temp.data[3] = 0x00;
+      motor_tx_msg_temp.data[4] = 0x00;
+      motor_tx_msg_temp.data[5] = 0x00;
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x202;
+      motor_tx_msg_temp.head.ExtId = 0x202;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      g_motion_step++;
+      break;
+    case 1:
+      motor_tx_msg_temp.head.StdId = 0x201; // pitch
+      motor_tx_msg_temp.head.ExtId = 0x201;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x5F;
+      motor_tx_msg_temp.data[1] = 0x00;
+      motor_tx_msg_temp.data[2] = (g_pitch_end_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_pitch_end_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_pitch_end_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_pitch_end_dst_raw >> 24) & 0x000000FF);
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x202; // yaw
+      motor_tx_msg_temp.head.ExtId = 0x202;
+      motor_tx_msg_temp.data[2] = (g_yaw_end_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_yaw_end_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_yaw_end_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_yaw_end_dst_raw >> 24) & 0x000000FF);
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      wait_cnt = 0;
+      g_motion_step++;
+      break;
+    case 2:
+      wait_cnt++;
+      if (wait_cnt >= 10)
+      {
+        wait_cnt = 0;
+        g_motion_step++;
+      }
+      break;
+    case 3:
+      if (0 == g_motion_status)
+      {
+        g_motion_step = 0;
+        g_motion_request = 0;
+      }
+      break;
+
+    default:
+      break;
+    }
   }
 }
 /* USER CODE END Application */

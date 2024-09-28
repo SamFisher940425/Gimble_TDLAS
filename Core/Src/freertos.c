@@ -51,7 +51,11 @@ enum Ctrl_Msg_Func_Code
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define MOTOR_ENCODER_PPC 131072U // motor encoder pulse per circle
+#define PITCH_RATIO 1.764706F     // 60:34
+#define YAW_RATIO 2.571429F       // 72:28
+#define PITCH_PULSE_PER_DEG 642.509804F
+#define YAW_PULSE_PER_DEG 936.228571F
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -69,13 +73,13 @@ extern volatile uint8_t g_rs485_c1_state;
 extern volatile uint8_t g_rs485_c1_tx_buf[RS485_C1_TX_DATA_LENGTH];
 extern volatile uint8_t g_rs485_c1_rx_buf[RS485_C1_RX_DATA_LENGTH];
 uint8_t g_gimble_id = 1;
-uint16_t g_pitch_start_dst = 0; // 0.1 degree
-uint16_t g_pitch_end_dst = 0;   // 0.1 degree
-uint16_t g_pitch_speed_dst = 0; // deg/s
-uint16_t g_yaw_start_dst = 0;   // 0.1 degree
-uint16_t g_yaw_end_dst = 0;     // 0.1 degree
-uint16_t g_yaw_speed_dst = 0;   // deg/s
-uint8_t g_motion_mode = 0;      // 0 dst point mode 1 start-end-speed mode
+int16_t g_pitch_start_dst = 0; // 0.1 degree
+int16_t g_pitch_end_dst = 0;   // 0.1 degree
+int16_t g_pitch_speed_dst = 0; // deg/s
+int16_t g_yaw_start_dst = 0;   // 0.1 degree
+int16_t g_yaw_end_dst = 0;     // 0.1 degree
+int16_t g_yaw_speed_dst = 0;   // deg/s
+uint8_t g_motion_mode = 0;     // 0 dst point mode 1 start-end-speed mode
 uint8_t g_motion_request = 0;
 uint8_t g_motion_step = 0;
 int32_t g_pitch_start_dst_raw = 0; // encoder raw data
@@ -95,8 +99,8 @@ extern CAN_TxHeaderTypeDef g_can_tx_message_head;
 extern volatile uint8_t g_can_tx_data[8];
 extern CAN_RxHeaderTypeDef g_can_rx_message_head;
 extern volatile uint8_t g_can_rx_data[8];
-uint16_t g_yaw = 0;          // 0.1 degree
-uint16_t g_pitch = 0;        // 0.1 degree
+int16_t g_yaw = 0;           // 0.1 degree
+int16_t g_pitch = 0;         // 0.1 degree
 uint8_t g_motion_status = 0; // bit0 pitch motion status bit1 yaw motion status
 int32_t g_yaw_raw = 0;       // encoder raw data
 int32_t g_pitch_raw = 0;     // encoder raw data
@@ -543,6 +547,7 @@ void StartTask_WorkFlow(void *argument)
         g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[7] << 24) & 0xFF000000);
 
         // here need trans raw pitch to degree pitch
+        g_pitch = (int16_t)(g_pitch_raw / PITCH_PULSE_PER_DEG * 10.0F);
         break;
       case 0x182: // yaw TPDO1
         if ((1 == (motor_rx_msg_temp.data[1] >> 2) & 0x01))
@@ -568,6 +573,7 @@ void StartTask_WorkFlow(void *argument)
         g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[7] << 24) & 0xFF000000);
 
         // here need trans raw yaw to degree yaw
+        g_yaw = (int16_t)(g_yaw_raw / YAW_PULSE_PER_DEG * 10.0F);
         break;
       case 0x581: // pitch SDO
         break;
@@ -872,6 +878,12 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
       g_motion_request = 1;
 
       // here nedd trans dst angle to dst raw angle
+      g_yaw_start_dst_raw = (int32_t)(g_yaw_start_dst / 10.0F * YAW_PULSE_PER_DEG);
+      g_yaw_end_dst_raw = (int32_t)(g_yaw_end_dst / 10.0F * YAW_PULSE_PER_DEG);
+      g_yaw_speed_dst_raw = (int16_t)(g_yaw_speed_dst * 60.0F / 360.0F * 72.0F / 28.0F);
+      g_pitch_start_dst_raw = (int32_t)(g_pitch_start_dst / 10.0F * PITCH_PULSE_PER_DEG);
+      g_pitch_end_dst_raw = (int32_t)(g_pitch_end_dst / 10.0F * PITCH_PULSE_PER_DEG);
+      g_pitch_speed_dst_raw = (int16_t)(g_pitch_speed_dst * 60.0F / 360.0F * 60.0F / 34.0F);
     }
 
     ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
@@ -899,6 +911,10 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
       g_pitch_end_dst = (((g_pitch_end_dst << 8) & 0xFF00) | msg->data[2]);
       g_motion_mode = 0;
       g_motion_request = 1;
+
+      // here nedd trans dst angle to dst raw angle
+      g_yaw_end_dst_raw = (int32_t)(g_yaw_end_dst / 10.0F * YAW_PULSE_PER_DEG);
+      g_pitch_end_dst_raw = (int32_t)(g_pitch_end_dst / 10.0F * PITCH_PULSE_PER_DEG);
     }
 
     ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
@@ -1083,7 +1099,7 @@ void Motor_Motion_Ctrl(void)
   static uint32_t wait_cnt = 0;
   Motor_Tx_Ctrl_Msg motor_tx_msg_temp;
 
-  if (g_motion_mode)
+  if (g_motion_mode) // start-end-speed ctrl
   {
     switch (g_motion_step)
     {
@@ -1110,6 +1126,30 @@ void Motor_Motion_Ctrl(void)
       g_motion_step++;
       break;
     case 1:
+      // need to set motion speed
+      motor_tx_msg_temp.head.StdId = 0x601;
+      motor_tx_msg_temp.head.ExtId = 0x601;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x2B;
+      motor_tx_msg_temp.data[1] = 0x7F;
+      motor_tx_msg_temp.data[2] = 0x60;
+      motor_tx_msg_temp.data[3] = 0x00;
+      motor_tx_msg_temp.data[4] = (uint8_t)(g_pitch_speed_dst_raw & 0x00FF);
+      motor_tx_msg_temp.data[5] = (uint8_t)((g_pitch_speed_dst_raw >> 8) & 0x00FF);
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x602;
+      motor_tx_msg_temp.head.ExtId = 0x602;
+      motor_tx_msg_temp.data[4] = (uint8_t)(g_yaw_speed_dst_raw & 0x00FF);
+      motor_tx_msg_temp.data[5] = (uint8_t)((g_yaw_speed_dst_raw >> 8) & 0x00FF);
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      g_motion_step++;
+      break;
+    case 2:
       motor_tx_msg_temp.head.StdId = 0x201; // pitch
       motor_tx_msg_temp.head.ExtId = 0x201;
       motor_tx_msg_temp.head.IDE = CAN_ID_STD;
@@ -1135,7 +1175,7 @@ void Motor_Motion_Ctrl(void)
       wait_cnt = 0;
       g_motion_step++;
       break;
-    case 2:
+    case 3:
       wait_cnt++;
       if (wait_cnt >= 10)
       {
@@ -1143,13 +1183,13 @@ void Motor_Motion_Ctrl(void)
         g_motion_step++;
       }
       break;
-    case 3:
+    case 4:
       if (0 == g_motion_status)
       {
         g_motion_step++;
       }
       break;
-    case 4:
+    case 5:
       motor_tx_msg_temp.head.StdId = 0x201; // pitch
       motor_tx_msg_temp.head.ExtId = 0x201;
       motor_tx_msg_temp.head.IDE = CAN_ID_STD;
@@ -1175,7 +1215,7 @@ void Motor_Motion_Ctrl(void)
       wait_cnt = 0;
       g_motion_step++;
       break;
-    case 5:
+    case 6:
       wait_cnt++;
       if (wait_cnt >= 10)
       {
@@ -1183,7 +1223,7 @@ void Motor_Motion_Ctrl(void)
         g_motion_step++;
       }
       break;
-    case 6:
+    case 7:
       if (0 == g_motion_status)
       {
         g_motion_step = 0;

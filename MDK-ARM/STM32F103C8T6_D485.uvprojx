@@ -395,6 +395,16 @@
           <GroupName>Application/User/Core</GroupName>
           <Files>
             <File>
+              <FileName>msg_list.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\msg_list.c</FilePath>
+            </File>
+            <File>
+              <FileName>CRC16_MODBUS.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\CRC16_MODBUS.c</FilePath>
+            </File>
+            <File>
               <FileName>main.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/main.c</FilePath>
@@ -810,16 +820,6 @@
               <FileName>stm32f1xx_hal_timebase_tim.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/stm32f1xx_hal_timebase_tim.c</FilePath>
-            </File>
-            <File>
-              <FileName>msg_list.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\msg_list.c</FilePath>
-            </File>
-            <File>
-              <FileName>CRC16_MODBUS.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\CRC16_MODBUS.c</FilePath>
             </File>
           </Files>
         </Group>

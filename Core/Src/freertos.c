@@ -51,11 +51,8 @@ enum Ctrl_Msg_Func_Code
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define MOTOR_ENCODER_PPC 131072U // motor encoder pulse per circle
-#define PITCH_RATIO 1.764706F     // 60:34
-#define YAW_RATIO 2.571429F       // 72:28
-#define PITCH_PULSE_PER_DEG 642.509804F
-#define YAW_PULSE_PER_DEG 936.228571F
+#define PITCH_PULSE_PER_DEG 2343.361111F
+#define YAW_PULSE_PER_DEG 3533.402941F
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -88,6 +85,8 @@ int16_t g_pitch_speed_dst_raw = 0; // encoder raw data
 int32_t g_yaw_start_dst_raw = 0;   // encoder raw data
 int32_t g_yaw_end_dst_raw = 0;     // encoder raw data
 int16_t g_yaw_speed_dst_raw = 0;   // encoder raw data
+int32_t g_pitch_offset = -14000;
+int32_t g_yaw_offset = 0;
 
 extern volatile uint8_t g_rs485_c2_state;
 extern volatile uint8_t g_rs485_c2_tx_buf[RS485_C2_TX_DATA_LENGTH];
@@ -107,7 +106,8 @@ int32_t g_pitch_raw = 0;     // encoder raw data
 int16_t g_pitch_speed_raw = 0;
 int16_t g_yaw_speed_raw = 0;
 uint16_t g_stop_speed_th = 10;
-uint8_t g_motor_init_flag = 0; // 0 not init 1 finished init
+uint8_t g_motor_init_flag = 0;        // 0 not init 1 finished init
+uint8_t g_motor_zero_finded_flag = 0; // bit0 pitch state bit1 yaw state
 
 volatile uint16_t g_pwm_min = 1000;
 volatile uint16_t g_pwm_mid = 1500;
@@ -177,6 +177,7 @@ const osThreadAttr_t myTask_PWM_attributes = {
 void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg);
 void Motor_Init(void);
 void Motor_Motion_Ctrl(void);
+int32_t Motor_Angle_Raw_Limit(int32_t angle_raw, int32_t max, int32_t min);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -524,7 +525,10 @@ void StartTask_WorkFlow(void *argument)
       switch (motor_rx_msg_temp.head.StdId)
       {
       case 0x181: // pitch TPDO1
-        if ((1 == (motor_rx_msg_temp.data[1] >> 2) & 0x01))
+        g_pitch_speed_raw = motor_rx_msg_temp.data[2];
+        g_pitch_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
+
+        if (abs(g_pitch_speed_raw) < g_stop_speed_th)
         {
           g_motion_status &= ~(0x01);
         }
@@ -533,24 +537,19 @@ void StartTask_WorkFlow(void *argument)
           g_motion_status |= 0x01;
         }
 
-        g_pitch_speed_raw = motor_rx_msg_temp.data[2];
-        g_pitch_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
-
-        if ((0 != (g_motion_status & 0x01)) && abs(g_pitch_speed_raw) < g_stop_speed_th)
-        {
-          g_motion_status &= ~(0x01);
-        }
-
         g_pitch_raw = motor_rx_msg_temp.data[4];
         g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[5] << 8) & 0x0000FF00);
         g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[6] << 16) & 0x00FF0000);
         g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[7] << 24) & 0xFF000000);
 
         // here need trans raw pitch to degree pitch
-        g_pitch = (int16_t)(g_pitch_raw / PITCH_PULSE_PER_DEG * 10.0F);
+        g_pitch = (int16_t)((g_pitch_raw - g_pitch_offset) / PITCH_PULSE_PER_DEG * 10.0F);
         break;
       case 0x182: // yaw TPDO1
-        if ((1 == (motor_rx_msg_temp.data[1] >> 2) & 0x01))
+        g_yaw_speed_raw = motor_rx_msg_temp.data[2];
+        g_yaw_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
+
+        if (abs(g_yaw_speed_raw) < g_stop_speed_th)
         {
           g_motion_status &= ~(0x02);
         }
@@ -559,25 +558,39 @@ void StartTask_WorkFlow(void *argument)
           g_motion_status |= 0x02;
         }
 
-        g_yaw_speed_raw = motor_rx_msg_temp.data[2];
-        g_yaw_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
-
-        if ((0 != (g_motion_status & 0x02)) && abs(g_yaw_speed_raw) < g_stop_speed_th)
-        {
-          g_motion_status &= ~(0x02);
-        }
-
         g_yaw_raw = motor_rx_msg_temp.data[4];
         g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[5] << 8) & 0x0000FF00);
         g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[6] << 16) & 0x00FF0000);
         g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[7] << 24) & 0xFF000000);
 
         // here need trans raw yaw to degree yaw
-        g_yaw = (int16_t)(g_yaw_raw / YAW_PULSE_PER_DEG * 10.0F);
+        g_yaw = (int16_t)((g_yaw_raw - g_yaw_offset) / YAW_PULSE_PER_DEG * 10.0F);
         break;
       case 0x581: // pitch SDO
+        if (0x09 == motor_rx_msg_temp.data[1] && 0x20 == motor_rx_msg_temp.data[2] && 0x00 == motor_rx_msg_temp.data[3])
+        {
+          if (motor_rx_msg_temp.data[4])
+          {
+            g_motor_zero_finded_flag &= ~(0x01);
+          }
+          else
+          {
+            g_motor_zero_finded_flag |= 0x01;
+          }
+        }
         break;
       case 0x582: // yaw SDO
+        if (0x09 == motor_rx_msg_temp.data[1] && 0x20 == motor_rx_msg_temp.data[2] && 0x00 == motor_rx_msg_temp.data[3])
+        {
+          if (motor_rx_msg_temp.data[4])
+          {
+            g_motor_zero_finded_flag &= ~(0x02);
+          }
+          else
+          {
+            g_motor_zero_finded_flag |= 0x02;
+          }
+        }
         break;
 
       default:
@@ -709,14 +722,7 @@ void StartTask_WorkFlow(void *argument)
 void StartTask_PWM(void *argument)
 {
   /* USER CODE BEGIN StartTask_PWM */
-  TIM_OC_InitTypeDef config;
-  config.OCMode = TIM_OCFAST_ENABLE;
-  config.Pulse = g_pwm_mid;
-  config.OCFastMode = TIM_OCFAST_ENABLE;
-  config.OCPolarity = TIM_OCPOLARITY_HIGH;
-  config.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  config.OCIdleState = TIM_OCIDLESTATE_RESET;
-  config.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  uint16_t pulse_temp = 0;
   /* Infinite loop */
   for (;;)
   {
@@ -724,33 +730,39 @@ void StartTask_PWM(void *argument)
     switch (g_pwm_flag)
     {
     case 0:
-      if (g_pwm_min != config.Pulse)
+      if (g_pwm_min - 1 != pulse_temp)
       {
-        config.Pulse = g_pwm_min;
-        HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+        HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+        pulse_temp = g_pwm_min - 1;
+        __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, pulse_temp);
+        osDelay(1000);
+        HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
       }
       break;
     case 1: // active once
-      config.Pulse = g_pwm_max;
-      HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+      HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+      pulse_temp = g_pwm_max;
+      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, pulse_temp);
       osDelay(500);
-      config.Pulse = g_pwm_min;
-      HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+      pulse_temp = g_pwm_min;
+      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, pulse_temp);
       g_pwm_flag = 0;
       break;
     case 2: // open
-      config.Pulse = g_pwm_max;
-      HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+      HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+      pulse_temp = g_pwm_max;
+      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, pulse_temp);
       osDelay(500);
-      config.Pulse = g_pwm_min;
-      HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+      pulse_temp = g_pwm_min;
+      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, pulse_temp);
       osDelay(1000);
       break;
     case 255: // fixing mode
-      if (g_pwm_mid != config.Pulse)
+      if (g_pwm_mid != pulse_temp)
       {
-        config.Pulse = g_pwm_mid;
-        HAL_TIM_PWM_ConfigChannel(&htim4, &config, TIM_CHANNEL_1);
+        HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+        pulse_temp = g_pwm_mid;
+        __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, pulse_temp);
       }
       break;
 
@@ -874,16 +886,29 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
       g_pitch_end_dst = (((g_pitch_end_dst << 8) & 0xFF00) | msg->data[8]);
       g_pitch_speed_dst = msg->data[11];
       g_pitch_speed_dst = (((g_pitch_speed_dst << 8) & 0xFF00) | msg->data[10]);
-      g_motion_mode = 1;
-      g_motion_request = 1;
 
       // here nedd trans dst angle to dst raw angle
-      g_yaw_start_dst_raw = (int32_t)(g_yaw_start_dst / 10.0F * YAW_PULSE_PER_DEG);
-      g_yaw_end_dst_raw = (int32_t)(g_yaw_end_dst / 10.0F * YAW_PULSE_PER_DEG);
+      g_yaw_start_dst_raw = (int32_t)(g_yaw_start_dst / 10.0F * YAW_PULSE_PER_DEG) + g_yaw_offset;
+      g_yaw_start_dst_raw = Motor_Angle_Raw_Limit(g_yaw_start_dst_raw, 165 * YAW_PULSE_PER_DEG, -165 * YAW_PULSE_PER_DEG);
+      g_yaw_end_dst_raw = (int32_t)(g_yaw_end_dst / 10.0F * YAW_PULSE_PER_DEG) + g_yaw_offset;
+      g_yaw_end_dst_raw = Motor_Angle_Raw_Limit(g_yaw_end_dst_raw, 165 * YAW_PULSE_PER_DEG, -165 * YAW_PULSE_PER_DEG);
       g_yaw_speed_dst_raw = (int16_t)(g_yaw_speed_dst * 60.0F / 360.0F * 72.0F / 28.0F);
-      g_pitch_start_dst_raw = (int32_t)(g_pitch_start_dst / 10.0F * PITCH_PULSE_PER_DEG);
-      g_pitch_end_dst_raw = (int32_t)(g_pitch_end_dst / 10.0F * PITCH_PULSE_PER_DEG);
+      if (g_yaw_speed_dst_raw > 5000)
+        g_yaw_speed_dst_raw = 5000;
+      if (g_yaw_speed_dst_raw < 0)
+        g_yaw_speed_dst_raw = 0;
+      g_pitch_start_dst_raw = (int32_t)(g_pitch_start_dst / 10.0F * PITCH_PULSE_PER_DEG) + g_pitch_offset;
+      g_pitch_start_dst_raw = Motor_Angle_Raw_Limit(g_pitch_start_dst_raw, 85 * PITCH_PULSE_PER_DEG, -85 * PITCH_PULSE_PER_DEG);
+      g_pitch_end_dst_raw = (int32_t)(g_pitch_end_dst / 10.0F * PITCH_PULSE_PER_DEG) + g_pitch_offset;
+      g_pitch_end_dst_raw = Motor_Angle_Raw_Limit(g_pitch_end_dst_raw, 85 * PITCH_PULSE_PER_DEG, -85 * PITCH_PULSE_PER_DEG);
       g_pitch_speed_dst_raw = (int16_t)(g_pitch_speed_dst * 60.0F / 360.0F * 60.0F / 34.0F);
+      if (g_pitch_speed_dst_raw > 5000)
+        g_pitch_speed_dst_raw = 5000;
+      if (g_pitch_speed_dst_raw < 0)
+        g_pitch_speed_dst_raw = 0;
+
+      g_motion_mode = 1;
+      g_motion_request = 1;
     }
 
     ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
@@ -909,12 +934,15 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
       g_yaw_end_dst = (((g_yaw_end_dst << 8) & 0xFF00) | msg->data[0]);
       g_pitch_end_dst = msg->data[3];
       g_pitch_end_dst = (((g_pitch_end_dst << 8) & 0xFF00) | msg->data[2]);
-      g_motion_mode = 0;
-      g_motion_request = 1;
 
       // here nedd trans dst angle to dst raw angle
-      g_yaw_end_dst_raw = (int32_t)(g_yaw_end_dst / 10.0F * YAW_PULSE_PER_DEG);
-      g_pitch_end_dst_raw = (int32_t)(g_pitch_end_dst / 10.0F * PITCH_PULSE_PER_DEG);
+      g_yaw_end_dst_raw = (int32_t)(g_yaw_end_dst / 10.0F * YAW_PULSE_PER_DEG) + g_yaw_offset;
+      g_yaw_end_dst_raw = Motor_Angle_Raw_Limit(g_yaw_end_dst_raw, 165 * YAW_PULSE_PER_DEG, -165 * YAW_PULSE_PER_DEG);
+      g_pitch_end_dst_raw = (int32_t)(g_pitch_end_dst / 10.0F * PITCH_PULSE_PER_DEG) + g_pitch_offset;
+      g_pitch_end_dst_raw = Motor_Angle_Raw_Limit(g_pitch_end_dst_raw, 85 * PITCH_PULSE_PER_DEG, -85 * PITCH_PULSE_PER_DEG);
+
+      g_motion_mode = 0;
+      g_motion_request = 1;
     }
 
     ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
@@ -1023,6 +1051,7 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
 void Motor_Init(void)
 {
   static uint8_t step = 0;
+  static uint8_t wait_cnt = 0;
   Motor_Tx_Ctrl_Msg motor_tx_msg_temp;
 
   switch (step)
@@ -1085,8 +1114,65 @@ void Motor_Init(void)
     motor_tx_msg_temp.head.StdId = 0x202;
     motor_tx_msg_temp.head.ExtId = 0x202;
     Motor_Tx_Msg_Add(&motor_tx_msg_temp);
-    step = 0;
-    g_motor_init_flag = 1;
+    wait_cnt = 0;
+    step++;
+    break;
+  case 3:
+    wait_cnt++;
+    if (wait_cnt >= 2)
+    {
+      wait_cnt = 0;
+      step++;
+    }
+    break;
+  case 4:
+    motor_tx_msg_temp.head.StdId = 0x601;
+    motor_tx_msg_temp.head.ExtId = 0x601;
+    motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+    motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+    motor_tx_msg_temp.head.DLC = 6;
+    motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+    motor_tx_msg_temp.data[0] = 0x2B;
+    motor_tx_msg_temp.data[1] = 0x09;
+    motor_tx_msg_temp.data[2] = 0x20;
+    motor_tx_msg_temp.data[3] = 0x00;
+    motor_tx_msg_temp.data[4] = 0x01;
+    motor_tx_msg_temp.data[5] = 0x00;
+    motor_tx_msg_temp.data[6] = 0x00;
+    motor_tx_msg_temp.data[7] = 0x00;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    motor_tx_msg_temp.head.StdId = 0x602;
+    motor_tx_msg_temp.head.ExtId = 0x602;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    step++;
+    break;
+  case 5:
+    if (g_motor_zero_finded_flag < 3)
+    {
+      motor_tx_msg_temp.head.StdId = 0x601;
+      motor_tx_msg_temp.head.ExtId = 0x601;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x4B;
+      motor_tx_msg_temp.data[1] = 0x09;
+      motor_tx_msg_temp.data[2] = 0x20;
+      motor_tx_msg_temp.data[3] = 0x00;
+      motor_tx_msg_temp.data[4] = 0x00;
+      motor_tx_msg_temp.data[5] = 0x00;
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x602;
+      motor_tx_msg_temp.head.ExtId = 0x602;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    }
+    else
+    {
+      step = 0;
+      g_motor_init_flag = 1;
+    }
     break;
 
   default:
@@ -1177,7 +1263,7 @@ void Motor_Motion_Ctrl(void)
       break;
     case 3:
       wait_cnt++;
-      if (wait_cnt >= 10)
+      if (wait_cnt >= 100)
       {
         wait_cnt = 0;
         g_motion_step++;
@@ -1190,6 +1276,28 @@ void Motor_Motion_Ctrl(void)
       }
       break;
     case 5:
+      // enable motor first
+      motor_tx_msg_temp.head.StdId = 0x201;
+      motor_tx_msg_temp.head.ExtId = 0x201;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x07;
+      motor_tx_msg_temp.data[1] = 0x00;
+      motor_tx_msg_temp.data[2] = 0x00;
+      motor_tx_msg_temp.data[3] = 0x00;
+      motor_tx_msg_temp.data[4] = 0x00;
+      motor_tx_msg_temp.data[5] = 0x00;
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x202;
+      motor_tx_msg_temp.head.ExtId = 0x202;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      g_motion_step++;
+      break;
+    case 6:
       motor_tx_msg_temp.head.StdId = 0x201; // pitch
       motor_tx_msg_temp.head.ExtId = 0x201;
       motor_tx_msg_temp.head.IDE = CAN_ID_STD;
@@ -1215,15 +1323,15 @@ void Motor_Motion_Ctrl(void)
       wait_cnt = 0;
       g_motion_step++;
       break;
-    case 6:
+    case 7:
       wait_cnt++;
-      if (wait_cnt >= 10)
+      if (wait_cnt >= 100)
       {
         wait_cnt = 0;
         g_motion_step++;
       }
       break;
-    case 7:
+    case 8:
       if (0 == g_motion_status)
       {
         g_motion_step = 0;
@@ -1262,6 +1370,32 @@ void Motor_Motion_Ctrl(void)
       g_motion_step++;
       break;
     case 1:
+      g_pitch_speed_dst_raw = 3000;
+      g_yaw_speed_dst_raw = 3000;
+      // need to set motion speed
+      motor_tx_msg_temp.head.StdId = 0x601;
+      motor_tx_msg_temp.head.ExtId = 0x601;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x2B;
+      motor_tx_msg_temp.data[1] = 0x7F;
+      motor_tx_msg_temp.data[2] = 0x60;
+      motor_tx_msg_temp.data[3] = 0x00;
+      motor_tx_msg_temp.data[4] = (uint8_t)(g_pitch_speed_dst_raw & 0x00FF);
+      motor_tx_msg_temp.data[5] = (uint8_t)((g_pitch_speed_dst_raw >> 8) & 0x00FF);
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x602;
+      motor_tx_msg_temp.head.ExtId = 0x602;
+      motor_tx_msg_temp.data[4] = (uint8_t)(g_yaw_speed_dst_raw & 0x00FF);
+      motor_tx_msg_temp.data[5] = (uint8_t)((g_yaw_speed_dst_raw >> 8) & 0x00FF);
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      g_motion_step++;
+      break;
+    case 2:
       motor_tx_msg_temp.head.StdId = 0x201; // pitch
       motor_tx_msg_temp.head.ExtId = 0x201;
       motor_tx_msg_temp.head.IDE = CAN_ID_STD;
@@ -1287,7 +1421,7 @@ void Motor_Motion_Ctrl(void)
       wait_cnt = 0;
       g_motion_step++;
       break;
-    case 2:
+    case 3:
       wait_cnt++;
       if (wait_cnt >= 10)
       {
@@ -1295,7 +1429,7 @@ void Motor_Motion_Ctrl(void)
         g_motion_step++;
       }
       break;
-    case 3:
+    case 4:
       if (0 == g_motion_status)
       {
         g_motion_step = 0;
@@ -1308,4 +1442,19 @@ void Motor_Motion_Ctrl(void)
     }
   }
 }
+
+int32_t Motor_Angle_Raw_Limit(int32_t angle_raw, int32_t max, int32_t min)
+{
+  int32_t angle_temp = angle_raw;
+  if (angle_temp > max)
+  {
+    angle_temp = max;
+  }
+  if (angle_temp < min)
+  {
+    angle_temp = min;
+  }
+  return angle_temp;
+}
+
 /* USER CODE END Application */

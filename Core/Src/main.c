@@ -31,6 +31,7 @@
 /* USER CODE BEGIN Includes */
 #include "CRC16_MODBUS.h"
 #include "msg_list.h"
+#include "flash.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -145,6 +146,8 @@ int main(void)
   HAL_CAN_RegisterCallback(&hcan, HAL_CAN_RX_FIFO0_MSG_PENDING_CB_ID, HAL_CAN_RxFifo0MsgPendingCallback);
 
   HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+	
+	Clear_OTA_Flag();
   /* USER CODE END 2 */
 
   /* Init scheduler */

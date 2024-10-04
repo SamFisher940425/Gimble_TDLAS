@@ -32,6 +32,7 @@
 #include "tim.h"
 #include "CRC16_MODBUS.h"
 #include "msg_list.h"
+#include "flash.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,7 +46,22 @@ enum Ctrl_Msg_Func_Code
   DST_ANGLE_CMD,
   EMERGENCY_STOP,
   WIPERS_CTRL,
-  LASER_CTRL
+  LASER_CTRL,
+  OTA_BEGIN = 0x10,
+  OTA_TRANSMIT,
+  GET_OTA_STATE,
+  OTA_FINISH,
+  OTA_RESET
+};
+
+enum OTA_STATUS
+{
+  OTA_STATUS_NOT_STARTED = 0x00,
+  OTA_STATUS_STARTED,
+  OTA_STATUS_UPDATING,
+  OTA_STATUS_SUCCESS,
+  OTA_STATUS_FAIL,
+  OTA_STATUS_NOT_STARTED_IN_BOOT,
 };
 /* USER CODE END PTD */
 
@@ -113,6 +129,8 @@ volatile uint16_t g_pwm_min = 1000;
 volatile uint16_t g_pwm_mid = 1500;
 volatile uint16_t g_pwm_max = 2000;
 volatile uint8_t g_pwm_flag = 0; // 0 stop 1 active once 2 open 255 fixing mode
+
+uint8_t g_mcu_reset_request = 0;
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -502,6 +520,7 @@ void StartTask_WorkFlow(void *argument)
   /* USER CODE BEGIN StartTask_WorkFlow */
   TickType_t xLastWakeTime;
   uint32_t period_cnt = 0;
+  uint16_t wait_cnt = 0;
   Rangefinder_Msg range_msg_temp;
   TDLAS_Tx_Msg tdlas_tx_msg_temp;
   TDLAS_Rx_Msg tdlas_rx_msg_temp;
@@ -509,6 +528,7 @@ void StartTask_WorkFlow(void *argument)
   Motor_Rx_Ctrl_Msg motor_rx_msg_temp;
   uint16_t crc16_check = 0;
   uint8_t sum_check = 0;
+
   /* Infinite loop */
   for (;;)
   {
@@ -653,6 +673,20 @@ void StartTask_WorkFlow(void *argument)
       }
     }
 
+    if (g_mcu_reset_request)
+    {
+      wait_cnt++;
+      if (wait_cnt >= 10)
+      {
+        wait_cnt = 0;
+        MCU_Reset();
+      }
+    }
+    else
+    {
+      wait_cnt = 0;
+    }
+
     if (period_cnt % 10 == 0) // 5ms * 10 = 50ms send tdlas measure cmd
     {
       tdlas_tx_msg_temp.addr = 0x01;
@@ -780,6 +814,7 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
   Ctrl_Com_Msg ctrl_tx_msg_temp;
   uint8_t *ptr = &ctrl_tx_msg_temp.head_1;
   Motor_Tx_Ctrl_Msg motor_tx_msg_temp;
+  uint32_t fw_size = 0;
 
   switch (msg->func_code)
   {
@@ -1041,6 +1076,28 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
     ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
     Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
+    break;
+  case OTA_BEGIN:
+    fw_size = *(uint32_t *)&msg->data[0];
+    Save_OTA_Flag(fw_size);
+
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = OTA_BEGIN;
+    ctrl_tx_msg_temp.data_len = 0x01;
+    ctrl_tx_msg_temp.data[0] = OTA_STATUS_NOT_STARTED;
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
+
+    g_mcu_reset_request = 1;
     break;
 
   default:

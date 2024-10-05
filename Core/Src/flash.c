@@ -114,18 +114,18 @@ int32_t Save_OTA_Flag(uint32_t fw_size)
   // last 1K page
   uint32_t ota_flag_addr = Get_Flag_Addr();
   uint64_t data = ((uint64_t)fw_size << 32) | OTA_GOTO_BOOT_FLAG;
-  uint8_t test_result[TEST_RESULT_CNT] = {0};
+  uint8_t nvm_data[NVM_DATA_CNT] = {0};
 
-  for (uint8_t i = 0; i < TEST_RESULT_CNT; i++)
+  for (uint8_t i = 0; i < NVM_DATA_CNT; i++)
   {
-    test_result[i] = *(uint8_t *)(ota_flag_addr + 8 + i);
+    nvm_data[i] = *(uint8_t *)(ota_flag_addr + 8 + i);
   }
 
   if (Internal_Flash_Erase_Page(ota_flag_addr))
     return -1;
   if (Internal_Flash_Program_64(ota_flag_addr, data))
     return -2;
-  if (Internal_Flash_Program_32(ota_flag_addr + 8, test_result, TEST_RESULT_CNT))
+  if (Internal_Flash_Program_32(ota_flag_addr + 8, nvm_data, NVM_DATA_CNT))
     return -3;
   if (*(uint32_t *)ota_flag_addr != OTA_GOTO_BOOT_FLAG)
     return -4;
@@ -139,11 +139,11 @@ int32_t Clear_OTA_Flag(void)
   uint32_t ota_flag_addr = Get_Flag_Addr();
   uint32_t fw_size = Read_OTA_Size();
   uint64_t data = ((uint64_t)fw_size << 32) | OTA_GOTO_JUMP_FLAG;
-  uint8_t test_result[TEST_RESULT_CNT] = {0};
+  uint8_t nvm_data[NVM_DATA_CNT] = {0};
 
-  for (uint8_t i = 0; i < TEST_RESULT_CNT; i++)
+  for (uint8_t i = 0; i < NVM_DATA_CNT; i++)
   {
-    test_result[i] = *(uint8_t *)(ota_flag_addr + 8 + i);
+    nvm_data[i] = *(uint8_t *)(ota_flag_addr + 8 + i);
   }
 
   if (Read_OTA_Flag() == OTA_GOTO_JUMP_FLAG)
@@ -152,7 +152,7 @@ int32_t Clear_OTA_Flag(void)
     return -1;
   if (Internal_Flash_Program_64(ota_flag_addr, data))
     return -2;
-  if (Internal_Flash_Program_32(ota_flag_addr + 8, test_result, TEST_RESULT_CNT))
+  if (Internal_Flash_Program_32(ota_flag_addr + 8, nvm_data, NVM_DATA_CNT))
     return -3;
   if (*(uint32_t *)ota_flag_addr != OTA_GOTO_JUMP_FLAG)
     return -4;
@@ -160,20 +160,20 @@ int32_t Clear_OTA_Flag(void)
   return 0;
 }
 
-int32_t Read_Test_Result(uint8_t *test_result)
+int32_t Read_Nvm_Data(uint8_t *nvm_data)
 {
   // last 1K page
   uint32_t ota_flag_addr = Get_Flag_Addr();
 
-  for (uint8_t i = 0; i < TEST_RESULT_CNT; i++)
+  for (uint8_t i = 0; i < NVM_DATA_CNT; i++)
   {
-    test_result[i] = *(uint8_t *)(ota_flag_addr + 8 + i);
+    nvm_data[i] = *(uint8_t *)(ota_flag_addr + 8 + i);
   }
 
   return 0;
 }
 
-int32_t Save_Test_Result(uint8_t *test_result)
+int32_t Save_Nvm_Data(uint8_t *nvm_data)
 {
   // last 1K page
   uint32_t ota_flag_addr = Get_Flag_Addr();
@@ -187,7 +187,7 @@ int32_t Save_Test_Result(uint8_t *test_result)
     return -1;
   if (Internal_Flash_Program_64(ota_flag_addr, data))
     return -2;
-  if (Internal_Flash_Program_32(ota_flag_addr + 8, test_result, TEST_RESULT_CNT))
+  if (Internal_Flash_Program_32(ota_flag_addr + 8, nvm_data, NVM_DATA_CNT))
     return -3;
   if (*(uint32_t *)ota_flag_addr != ota_flag)
     return -4;
@@ -195,7 +195,7 @@ int32_t Save_Test_Result(uint8_t *test_result)
   return 0;
 }
 
-int32_t Clear_Test_Result(void)
+int32_t Clear_Nvm_Data(void)
 {
   // last 1K page
   uint32_t ota_flag_addr = Get_Flag_Addr();

@@ -23,7 +23,7 @@
 #define FLASH_BASE_ADDR 0x8000000
 #define MAIN_PROGRAM_ADDR (FLASH_BASE_ADDR + 16 * 0x400)
 
-#define TEST_RESULT_CNT 8 // seet to an integral multiple of 4 bytes, otherwise data may losed
+#define NVM_DATA_CNT 8 // seet to an integral multiple of 4 bytes, otherwise data may losed
 
 #ifdef __cplusplus
 extern "C"
@@ -38,9 +38,9 @@ extern "C"
     uint32_t Read_OTA_Flag(void);
     int32_t Save_OTA_Flag(uint32_t fw_size);
     int32_t Clear_OTA_Flag(void);
-    int32_t Read_Test_Result(uint8_t *test_result);
-    int32_t Save_Test_Result(uint8_t *test_result);
-    int32_t Clear_Test_Result(void);
+    int32_t Read_Nvm_Data(uint8_t *nvm_data);
+    int32_t Save_Nvm_Data(uint8_t *nvm_data);
+    int32_t Clear_Nvm_Data(void);
     int32_t Erase_All_Page(void);
     int32_t Check_Blank(uint32_t addr, uint32_t len);
     int32_t Check_Match(uint32_t addr, uint8_t *data, uint32_t len);

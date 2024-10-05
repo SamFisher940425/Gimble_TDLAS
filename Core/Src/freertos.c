@@ -49,7 +49,7 @@ enum Ctrl_Msg_Func_Code
   LASER_CTRL,
   OTA_BEGIN = 0x10,
   OTA_TRANSMIT,
-  GET_OTA_STATE,
+  OTA_GET_STATE,
   OTA_FINISH,
   OTA_RESET
 };

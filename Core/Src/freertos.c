@@ -545,10 +545,7 @@ void StartTask_WorkFlow(void *argument)
       switch (motor_rx_msg_temp.head.StdId)
       {
       case 0x181: // pitch TPDO1
-        g_pitch_speed_raw = motor_rx_msg_temp.data[2];
-        g_pitch_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
-
-        if (abs(g_pitch_speed_raw) < g_stop_speed_th)
+        if ((motor_rx_msg_temp.data[1] >> 2) && 0x01)
         {
           g_motion_status &= ~(0x01);
         }
@@ -556,6 +553,18 @@ void StartTask_WorkFlow(void *argument)
         {
           g_motion_status |= 0x01;
         }
+
+        g_pitch_speed_raw = motor_rx_msg_temp.data[2];
+        g_pitch_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
+
+        // if (abs(g_pitch_speed_raw) < g_stop_speed_th)
+        // {
+        //   g_motion_status &= ~(0x01);
+        // }
+        // else
+        // {
+        //   g_motion_status |= 0x01;
+        // }
 
         g_pitch_raw = motor_rx_msg_temp.data[4];
         g_pitch_raw |= (((uint32_t)motor_rx_msg_temp.data[5] << 8) & 0x0000FF00);
@@ -566,10 +575,7 @@ void StartTask_WorkFlow(void *argument)
         g_pitch = (int16_t)((g_pitch_raw - g_pitch_offset) / PITCH_PULSE_PER_DEG * 10.0F);
         break;
       case 0x182: // yaw TPDO1
-        g_yaw_speed_raw = motor_rx_msg_temp.data[2];
-        g_yaw_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
-
-        if (abs(g_yaw_speed_raw) < g_stop_speed_th)
+        if ((motor_rx_msg_temp.data[1] >> 2) && 0x01)
         {
           g_motion_status &= ~(0x02);
         }
@@ -577,6 +583,18 @@ void StartTask_WorkFlow(void *argument)
         {
           g_motion_status |= 0x02;
         }
+
+        g_yaw_speed_raw = motor_rx_msg_temp.data[2];
+        g_yaw_speed_raw |= (((uint16_t)motor_rx_msg_temp.data[3] << 8) & 0xFF00);
+
+        // if (abs(g_yaw_speed_raw) < g_stop_speed_th)
+        // {
+        //   g_motion_status &= ~(0x02);
+        // }
+        // else
+        // {
+        //   g_motion_status |= 0x02;
+        // }
 
         g_yaw_raw = motor_rx_msg_temp.data[4];
         g_yaw_raw |= (((uint32_t)motor_rx_msg_temp.data[5] << 8) & 0x0000FF00);
@@ -587,7 +605,7 @@ void StartTask_WorkFlow(void *argument)
         g_yaw = (int16_t)((g_yaw_raw - g_yaw_offset) / YAW_PULSE_PER_DEG * 10.0F);
         break;
       case 0x581: // pitch SDO
-        if (0x09 == motor_rx_msg_temp.data[1] && 0x20 == motor_rx_msg_temp.data[2] && 0x00 == motor_rx_msg_temp.data[3])
+        if (0x4B == motor_rx_msg_temp.data[0] && 0x09 == motor_rx_msg_temp.data[1] && 0x20 == motor_rx_msg_temp.data[2] && 0x00 == motor_rx_msg_temp.data[3])
         {
           if (motor_rx_msg_temp.data[4])
           {
@@ -600,7 +618,7 @@ void StartTask_WorkFlow(void *argument)
         }
         break;
       case 0x582: // yaw SDO
-        if (0x09 == motor_rx_msg_temp.data[1] && 0x20 == motor_rx_msg_temp.data[2] && 0x00 == motor_rx_msg_temp.data[3])
+        if (0x4B == motor_rx_msg_temp.data[0] && 0x09 == motor_rx_msg_temp.data[1] && 0x20 == motor_rx_msg_temp.data[2] && 0x00 == motor_rx_msg_temp.data[3])
         {
           if (motor_rx_msg_temp.data[4])
           {
@@ -1204,15 +1222,23 @@ void Motor_Init(void)
     step++;
     break;
   case 5:
+    wait_cnt++;
+    if (wait_cnt >= 2)
+    {
+      wait_cnt = 0;
+      step++;
+    }
+    break;
+  case 6:
     if (g_motor_zero_finded_flag < 3)
     {
       motor_tx_msg_temp.head.StdId = 0x601;
       motor_tx_msg_temp.head.ExtId = 0x601;
       motor_tx_msg_temp.head.IDE = CAN_ID_STD;
       motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
-      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.DLC = 8;
       motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
-      motor_tx_msg_temp.data[0] = 0x4B;
+      motor_tx_msg_temp.data[0] = 0x40;
       motor_tx_msg_temp.data[1] = 0x09;
       motor_tx_msg_temp.data[2] = 0x20;
       motor_tx_msg_temp.data[3] = 0x00;

@@ -102,7 +102,7 @@ int16_t g_pitch_speed_dst_raw = 0; // encoder raw data
 int32_t g_yaw_start_dst_raw = 0;   // encoder raw data
 int32_t g_yaw_end_dst_raw = 0;     // encoder raw data
 int16_t g_yaw_speed_dst_raw = 0;   // encoder raw data
-int32_t g_pitch_offset = -14000;
+int32_t g_pitch_offset = 2000;
 int32_t g_yaw_offset = 0;
 
 extern volatile uint8_t g_rs485_c2_state;
@@ -726,6 +726,7 @@ void StartTask_WorkFlow(void *argument)
       else
       {
         g_motion_request = 0;
+        g_motion_step = 0;
       }
     }
     else
@@ -1032,24 +1033,27 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
     Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     // need send emergency cmd
-    motor_tx_msg_temp.head.StdId = 0x601;
-    motor_tx_msg_temp.head.ExtId = 0x601;
-    motor_tx_msg_temp.head.IDE = CAN_ID_STD;
-    motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
-    motor_tx_msg_temp.head.DLC = 6;
-    motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
-    motor_tx_msg_temp.data[0] = 0x2B;
-    motor_tx_msg_temp.data[1] = 0x03;
-    motor_tx_msg_temp.data[2] = 0x20;
-    motor_tx_msg_temp.data[3] = 0x00;
-    motor_tx_msg_temp.data[4] = 0x01;
-    motor_tx_msg_temp.data[5] = 0x00;
-    motor_tx_msg_temp.data[6] = 0x00;
-    motor_tx_msg_temp.data[7] = 0x00;
-    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
-    motor_tx_msg_temp.head.StdId = 0x602;
-    motor_tx_msg_temp.head.ExtId = 0x602;
-    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    if (g_motor_init_flag)
+    {
+      motor_tx_msg_temp.head.StdId = 0x601;
+      motor_tx_msg_temp.head.ExtId = 0x601;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x2B;
+      motor_tx_msg_temp.data[1] = 0x03;
+      motor_tx_msg_temp.data[2] = 0x20;
+      motor_tx_msg_temp.data[3] = 0x00;
+      motor_tx_msg_temp.data[4] = 0x01;
+      motor_tx_msg_temp.data[5] = 0x00;
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x602;
+      motor_tx_msg_temp.head.ExtId = 0x602;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    }
     break;
   case WIPERS_CTRL:
     g_pwm_flag = msg->data[0];
@@ -1096,28 +1100,6 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
     Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     break;
-  case OTA_BEGIN:
-    fw_size = *(uint32_t *)&msg->data[0];
-    Save_OTA_Flag(fw_size);
-
-    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
-    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
-    ctrl_tx_msg_temp.src_id = g_gimble_id;
-    ctrl_tx_msg_temp.dst_id = msg->src_id;
-    ctrl_tx_msg_temp.func_code = OTA_BEGIN;
-    ctrl_tx_msg_temp.data_len = 0x01;
-    ctrl_tx_msg_temp.data[0] = OTA_STATUS_NOT_STARTED;
-    ctrl_tx_msg_temp.check = 0;
-    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
-    {
-      ctrl_tx_msg_temp.check += *(ptr + i);
-    }
-    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
-    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
-    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
-
-    g_mcu_reset_request = 1;
-    break;
   case MOTOR_ERROR_CLEAR:
     ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
     ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
@@ -1153,7 +1135,7 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     motor_tx_msg_temp.head.StdId = 0x202;
     motor_tx_msg_temp.head.ExtId = 0x202;
     Motor_Tx_Msg_Add(&motor_tx_msg_temp);
-    // send enable motor
+    // enable motor
     motor_tx_msg_temp.head.StdId = 0x201;
     motor_tx_msg_temp.head.ExtId = 0x201;
     motor_tx_msg_temp.head.IDE = CAN_ID_STD;
@@ -1172,6 +1154,28 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     motor_tx_msg_temp.head.StdId = 0x202;
     motor_tx_msg_temp.head.ExtId = 0x202;
     Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    break;
+  case OTA_BEGIN:
+    fw_size = *(uint32_t *)&msg->data[0];
+    Save_OTA_Flag(fw_size);
+
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = OTA_BEGIN;
+    ctrl_tx_msg_temp.data_len = 0x01;
+    ctrl_tx_msg_temp.data[0] = OTA_STATUS_NOT_STARTED;
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
+
+    g_mcu_reset_request = 1;
     break;
 
   default:
@@ -1336,17 +1340,21 @@ void Motor_Motion_Ctrl(void)
       motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
       motor_tx_msg_temp.head.DLC = 6;
       motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
-      motor_tx_msg_temp.data[0] = 0x07;
+      motor_tx_msg_temp.data[0] = 0x0F;
       motor_tx_msg_temp.data[1] = 0x00;
-      motor_tx_msg_temp.data[2] = 0x00;
-      motor_tx_msg_temp.data[3] = 0x00;
-      motor_tx_msg_temp.data[4] = 0x00;
-      motor_tx_msg_temp.data[5] = 0x00;
+      motor_tx_msg_temp.data[2] = (g_pitch_start_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_pitch_start_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_pitch_start_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_pitch_start_dst_raw >> 24) & 0x000000FF);
       motor_tx_msg_temp.data[6] = 0x00;
       motor_tx_msg_temp.data[7] = 0x00;
       Motor_Tx_Msg_Add(&motor_tx_msg_temp);
       motor_tx_msg_temp.head.StdId = 0x202;
       motor_tx_msg_temp.head.ExtId = 0x202;
+      motor_tx_msg_temp.data[2] = (g_yaw_start_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_yaw_start_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_yaw_start_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_yaw_start_dst_raw >> 24) & 0x000000FF);
       Motor_Tx_Msg_Add(&motor_tx_msg_temp);
       g_motion_step++;
       break;
@@ -1422,17 +1430,21 @@ void Motor_Motion_Ctrl(void)
       motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
       motor_tx_msg_temp.head.DLC = 6;
       motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
-      motor_tx_msg_temp.data[0] = 0x07;
+      motor_tx_msg_temp.data[0] = 0x0F;
       motor_tx_msg_temp.data[1] = 0x00;
-      motor_tx_msg_temp.data[2] = 0x00;
-      motor_tx_msg_temp.data[3] = 0x00;
-      motor_tx_msg_temp.data[4] = 0x00;
-      motor_tx_msg_temp.data[5] = 0x00;
+      motor_tx_msg_temp.data[2] = (g_pitch_end_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_pitch_end_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_pitch_end_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_pitch_end_dst_raw >> 24) & 0x000000FF);
       motor_tx_msg_temp.data[6] = 0x00;
       motor_tx_msg_temp.data[7] = 0x00;
       Motor_Tx_Msg_Add(&motor_tx_msg_temp);
       motor_tx_msg_temp.head.StdId = 0x202;
       motor_tx_msg_temp.head.ExtId = 0x202;
+      motor_tx_msg_temp.data[2] = (g_yaw_end_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_yaw_end_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_yaw_end_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_yaw_end_dst_raw >> 24) & 0x000000FF);
       Motor_Tx_Msg_Add(&motor_tx_msg_temp);
       g_motion_step++;
       break;
@@ -1494,17 +1506,21 @@ void Motor_Motion_Ctrl(void)
       motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
       motor_tx_msg_temp.head.DLC = 6;
       motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
-      motor_tx_msg_temp.data[0] = 0x07;
+      motor_tx_msg_temp.data[0] = 0x0F;
       motor_tx_msg_temp.data[1] = 0x00;
-      motor_tx_msg_temp.data[2] = 0x00;
-      motor_tx_msg_temp.data[3] = 0x00;
-      motor_tx_msg_temp.data[4] = 0x00;
-      motor_tx_msg_temp.data[5] = 0x00;
+      motor_tx_msg_temp.data[2] = (g_pitch_end_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_pitch_end_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_pitch_end_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_pitch_end_dst_raw >> 24) & 0x000000FF);
       motor_tx_msg_temp.data[6] = 0x00;
       motor_tx_msg_temp.data[7] = 0x00;
       Motor_Tx_Msg_Add(&motor_tx_msg_temp);
       motor_tx_msg_temp.head.StdId = 0x202;
       motor_tx_msg_temp.head.ExtId = 0x202;
+      motor_tx_msg_temp.data[2] = (g_yaw_end_dst_raw & 0x000000FF);
+      motor_tx_msg_temp.data[3] = ((g_yaw_end_dst_raw >> 8) & 0x000000FF);
+      motor_tx_msg_temp.data[4] = ((g_yaw_end_dst_raw >> 16) & 0x000000FF);
+      motor_tx_msg_temp.data[5] = ((g_yaw_end_dst_raw >> 24) & 0x000000FF);
       Motor_Tx_Msg_Add(&motor_tx_msg_temp);
       g_motion_step++;
       break;

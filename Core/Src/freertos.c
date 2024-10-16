@@ -47,6 +47,7 @@ enum Ctrl_Msg_Func_Code
   EMERGENCY_STOP,
   WIPERS_CTRL,
   LASER_CTRL,
+  MOTOR_ERROR_CLEAR,
   OTA_BEGIN = 0x10,
   OTA_TRANSMIT,
   OTA_GET_STATE,
@@ -1116,6 +1117,61 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
 
     g_mcu_reset_request = 1;
+    break;
+  case MOTOR_ERROR_CLEAR:
+    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+    ctrl_tx_msg_temp.src_id = g_gimble_id;
+    ctrl_tx_msg_temp.dst_id = msg->src_id;
+    ctrl_tx_msg_temp.func_code = MOTOR_ERROR_CLEAR;
+    ctrl_tx_msg_temp.data_len = 0x01;
+    ctrl_tx_msg_temp.data[0] = 0x01;
+    ctrl_tx_msg_temp.check = 0;
+    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+    {
+      ctrl_tx_msg_temp.check += *(ptr + i);
+    }
+    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
+    // need send error clear cmd
+    motor_tx_msg_temp.head.StdId = 0x201;
+    motor_tx_msg_temp.head.ExtId = 0x201;
+    motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+    motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+    motor_tx_msg_temp.head.DLC = 6;
+    motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+    motor_tx_msg_temp.data[0] = 0x86;
+    motor_tx_msg_temp.data[1] = 0x00;
+    motor_tx_msg_temp.data[2] = 0x00;
+    motor_tx_msg_temp.data[3] = 0x00;
+    motor_tx_msg_temp.data[4] = 0x00;
+    motor_tx_msg_temp.data[5] = 0x00;
+    motor_tx_msg_temp.data[6] = 0x00;
+    motor_tx_msg_temp.data[7] = 0x00;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    motor_tx_msg_temp.head.StdId = 0x202;
+    motor_tx_msg_temp.head.ExtId = 0x202;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    // send enable motor
+    motor_tx_msg_temp.head.StdId = 0x201;
+    motor_tx_msg_temp.head.ExtId = 0x201;
+    motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+    motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+    motor_tx_msg_temp.head.DLC = 6;
+    motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+    motor_tx_msg_temp.data[0] = 0x07;
+    motor_tx_msg_temp.data[1] = 0x00;
+    motor_tx_msg_temp.data[2] = 0x00;
+    motor_tx_msg_temp.data[3] = 0x00;
+    motor_tx_msg_temp.data[4] = 0x00;
+    motor_tx_msg_temp.data[5] = 0x00;
+    motor_tx_msg_temp.data[6] = 0x00;
+    motor_tx_msg_temp.data[7] = 0x00;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    motor_tx_msg_temp.head.StdId = 0x202;
+    motor_tx_msg_temp.head.ExtId = 0x202;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
     break;
 
   default:

@@ -102,7 +102,7 @@ int16_t g_pitch_speed_dst_raw = 0; // encoder raw data
 int32_t g_yaw_start_dst_raw = 0;   // encoder raw data
 int32_t g_yaw_end_dst_raw = 0;     // encoder raw data
 int16_t g_yaw_speed_dst_raw = 0;   // encoder raw data
-int32_t g_pitch_offset = 2000;
+int32_t g_pitch_offset = 0;
 int32_t g_yaw_offset = 0;
 
 extern volatile uint8_t g_rs485_c2_state;
@@ -964,23 +964,41 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
 
       g_motion_mode = 1;
       g_motion_request = 1;
-    }
 
-    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
-    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
-    ctrl_tx_msg_temp.src_id = g_gimble_id;
-    ctrl_tx_msg_temp.dst_id = msg->src_id;
-    ctrl_tx_msg_temp.func_code = ANGLE_AND_SPEED_CMD;
-    ctrl_tx_msg_temp.data_len = 0x01;
-    ctrl_tx_msg_temp.data[0] = 0x01;
-    ctrl_tx_msg_temp.check = 0;
-    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
-    {
-      ctrl_tx_msg_temp.check += *(ptr + i);
+      ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+      ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+      ctrl_tx_msg_temp.src_id = g_gimble_id;
+      ctrl_tx_msg_temp.dst_id = msg->src_id;
+      ctrl_tx_msg_temp.func_code = ANGLE_AND_SPEED_CMD;
+      ctrl_tx_msg_temp.data_len = 0x01;
+      ctrl_tx_msg_temp.data[0] = 0x01;
+      ctrl_tx_msg_temp.check = 0;
+      for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+      {
+        ctrl_tx_msg_temp.check += *(ptr + i);
+      }
+      ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+      ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+      Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     }
-    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
-    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
-    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
+    else
+    {
+      ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+      ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+      ctrl_tx_msg_temp.src_id = g_gimble_id;
+      ctrl_tx_msg_temp.dst_id = msg->src_id;
+      ctrl_tx_msg_temp.func_code = ANGLE_AND_SPEED_CMD;
+      ctrl_tx_msg_temp.data_len = 0x01;
+      ctrl_tx_msg_temp.data[0] = 0x00;
+      ctrl_tx_msg_temp.check = 0;
+      for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+      {
+        ctrl_tx_msg_temp.check += *(ptr + i);
+      }
+      ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+      ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+      Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
+    }
     break;
   case DST_ANGLE_CMD:
     if (0 == g_motion_request)
@@ -998,23 +1016,41 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
 
       g_motion_mode = 0;
       g_motion_request = 1;
-    }
 
-    ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
-    ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
-    ctrl_tx_msg_temp.src_id = g_gimble_id;
-    ctrl_tx_msg_temp.dst_id = msg->src_id;
-    ctrl_tx_msg_temp.func_code = DST_ANGLE_CMD;
-    ctrl_tx_msg_temp.data_len = 0x01;
-    ctrl_tx_msg_temp.data[0] = 0x01;
-    ctrl_tx_msg_temp.check = 0;
-    for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
-    {
-      ctrl_tx_msg_temp.check += *(ptr + i);
+      ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+      ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+      ctrl_tx_msg_temp.src_id = g_gimble_id;
+      ctrl_tx_msg_temp.dst_id = msg->src_id;
+      ctrl_tx_msg_temp.func_code = DST_ANGLE_CMD;
+      ctrl_tx_msg_temp.data_len = 0x01;
+      ctrl_tx_msg_temp.data[0] = 0x01;
+      ctrl_tx_msg_temp.check = 0;
+      for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+      {
+        ctrl_tx_msg_temp.check += *(ptr + i);
+      }
+      ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+      ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+      Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     }
-    ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
-    ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
-    Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
+    else
+    {
+      ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;
+      ctrl_tx_msg_temp.head_2 = CTRL_MSG_HEAD_2;
+      ctrl_tx_msg_temp.src_id = g_gimble_id;
+      ctrl_tx_msg_temp.dst_id = msg->src_id;
+      ctrl_tx_msg_temp.func_code = DST_ANGLE_CMD;
+      ctrl_tx_msg_temp.data_len = 0x01;
+      ctrl_tx_msg_temp.data[0] = 0x00;
+      ctrl_tx_msg_temp.check = 0;
+      for (uint8_t i = 0; i < ctrl_tx_msg_temp.data_len + 6; i++)
+      {
+        ctrl_tx_msg_temp.check += *(ptr + i);
+      }
+      ctrl_tx_msg_temp.tail_1 = CTRL_MSG_TAIL_1;
+      ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
+      Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
+    }
     break;
   case EMERGENCY_STOP:
     ctrl_tx_msg_temp.head_1 = CTRL_MSG_HEAD_1;

@@ -1358,6 +1358,25 @@ void Motor_Init(void)
     // }
     step = 0;
     // g_motor_init_flag = 1;
+    g_motor_zero_finded_flag = 0;
+    motor_tx_msg_temp.head.StdId = 0x601;
+    motor_tx_msg_temp.head.ExtId = 0x601;
+    motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+    motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+    motor_tx_msg_temp.head.DLC = 6;
+    motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+    motor_tx_msg_temp.data[0] = 0x2B;
+    motor_tx_msg_temp.data[1] = 0x09;
+    motor_tx_msg_temp.data[2] = 0x20;
+    motor_tx_msg_temp.data[3] = 0x00;
+    motor_tx_msg_temp.data[4] = 0x01;
+    motor_tx_msg_temp.data[5] = 0x00;
+    motor_tx_msg_temp.data[6] = 0x00;
+    motor_tx_msg_temp.data[7] = 0x00;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+    motor_tx_msg_temp.head.StdId = 0x602;
+    motor_tx_msg_temp.head.ExtId = 0x602;
+    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
     g_zero_find_request = 1;
     break;
   case 4:

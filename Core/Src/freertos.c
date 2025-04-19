@@ -726,7 +726,7 @@ void StartTask_WorkFlow(void *argument)
 
     if (0 != g_motion_request)
     {
-      if (g_motor_init_flag)
+      if (g_motor_init_flag > 1)
       {
         Motor_Motion_Ctrl();
       }
@@ -911,7 +911,7 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
     Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     // zero find cmd
-    if (g_motor_init_flag)
+    if (g_motor_init_flag > 1)
     {
       g_motor_zero_finded_flag = 0;
       motor_tx_msg_temp.head.StdId = 0x601;
@@ -1078,7 +1078,7 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
     ctrl_tx_msg_temp.tail_2 = CTRL_MSG_TAIL_2;
     Ctrl_Tx_Msg_Add(&ctrl_tx_msg_temp);
     // send emergency cmd
-    if (g_motor_init_flag)
+    if (g_motor_init_flag > 1)
     {
       motor_tx_msg_temp.head.StdId = 0x601;
       motor_tx_msg_temp.head.ExtId = 0x601;
@@ -1350,34 +1350,34 @@ void Motor_Init(void)
     step++;
     break;
   case 3:
-    // wait_cnt++;
-    // if (wait_cnt >= 2)
-    // {
-    //   wait_cnt = 0;
-    //   step++;
-    // }
-    step = 0;
-    // g_motor_init_flag = 1;
-    g_motor_zero_finded_flag = 0;
-    motor_tx_msg_temp.head.StdId = 0x601;
-    motor_tx_msg_temp.head.ExtId = 0x601;
-    motor_tx_msg_temp.head.IDE = CAN_ID_STD;
-    motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
-    motor_tx_msg_temp.head.DLC = 6;
-    motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
-    motor_tx_msg_temp.data[0] = 0x2B;
-    motor_tx_msg_temp.data[1] = 0x09;
-    motor_tx_msg_temp.data[2] = 0x20;
-    motor_tx_msg_temp.data[3] = 0x00;
-    motor_tx_msg_temp.data[4] = 0x01;
-    motor_tx_msg_temp.data[5] = 0x00;
-    motor_tx_msg_temp.data[6] = 0x00;
-    motor_tx_msg_temp.data[7] = 0x00;
-    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
-    motor_tx_msg_temp.head.StdId = 0x602;
-    motor_tx_msg_temp.head.ExtId = 0x602;
-    Motor_Tx_Msg_Add(&motor_tx_msg_temp);
-    g_zero_find_request = 1;
+    wait_cnt++;
+    if (wait_cnt >= 2)
+    {
+      wait_cnt = 0;
+      // step++;
+      step = 0;
+      g_motor_init_flag = 1;
+      g_motor_zero_finded_flag = 0;
+      motor_tx_msg_temp.head.StdId = 0x601;
+      motor_tx_msg_temp.head.ExtId = 0x601;
+      motor_tx_msg_temp.head.IDE = CAN_ID_STD;
+      motor_tx_msg_temp.head.RTR = CAN_RTR_DATA;
+      motor_tx_msg_temp.head.DLC = 6;
+      motor_tx_msg_temp.head.TransmitGlobalTime = DISABLE;
+      motor_tx_msg_temp.data[0] = 0x2B;
+      motor_tx_msg_temp.data[1] = 0x09;
+      motor_tx_msg_temp.data[2] = 0x20;
+      motor_tx_msg_temp.data[3] = 0x00;
+      motor_tx_msg_temp.data[4] = 0x01;
+      motor_tx_msg_temp.data[5] = 0x00;
+      motor_tx_msg_temp.data[6] = 0x00;
+      motor_tx_msg_temp.data[7] = 0x00;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      motor_tx_msg_temp.head.StdId = 0x602;
+      motor_tx_msg_temp.head.ExtId = 0x602;
+      Motor_Tx_Msg_Add(&motor_tx_msg_temp);
+      g_zero_find_request = 1;
+    }
     break;
   case 4:
     g_motor_zero_finded_flag = 0;
@@ -1434,7 +1434,7 @@ void Motor_Init(void)
     else
     {
       step = 0;
-      g_motor_init_flag = 1;
+      g_motor_init_flag = 2;
     }
     break;
 
@@ -1485,7 +1485,7 @@ void Motor_Zero_Find(void)
     {
       step = 0;
       g_zero_find_request = 0;
-      g_motor_init_flag = 1;
+      g_motor_init_flag = 2;
     }
     break;
 

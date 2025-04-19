@@ -284,18 +284,24 @@ void MX_FREERTOS_Init(void)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
+  static uint8_t wait_cnt = 0;
   /* Infinite loop */
   for (;;)
   {
     osDelay(500);
     HAL_GPIO_TogglePin(LED_2_GPIO_Port, LED_2_Pin);
-    if (0 == g_motor_init_flag)
+    wait_cnt++;
+    if (wait_cnt >= 5)
     {
-      Motor_Init();
-    }
-    if (g_zero_find_request == 1)
-    {
-      Motor_Zero_Find();
+      wait_cnt = 5;
+      if (0 == g_motor_init_flag)
+      {
+        Motor_Init();
+      }
+      if (g_zero_find_request == 1)
+      {
+        Motor_Zero_Find();
+      }
     }
   }
   /* USER CODE END StartDefaultTask */

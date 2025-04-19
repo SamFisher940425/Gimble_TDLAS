@@ -69,7 +69,7 @@ enum OTA_STATUS
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define PITCH_PULSE_PER_DEG 2343.361111F
+#define PITCH_PULSE_PER_DEG 1305.333333F
 #define YAW_PULSE_PER_DEG 3533.402941F
 /* USER CODE END PD */
 

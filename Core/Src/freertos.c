@@ -1357,7 +1357,8 @@ void Motor_Init(void)
     //   step++;
     // }
     step = 0;
-    g_motor_init_flag = 1;
+    // g_motor_init_flag = 1;
+    g_zero_find_request = 1;
     break;
   case 4:
     g_motor_zero_finded_flag = 0;
@@ -1465,6 +1466,7 @@ void Motor_Zero_Find(void)
     {
       step = 0;
       g_zero_find_request = 0;
+      g_motor_init_flag = 1;
     }
     break;
 

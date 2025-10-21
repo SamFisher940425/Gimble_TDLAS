@@ -69,8 +69,8 @@ enum OTA_STATUS
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define PITCH_PULSE_PER_DEG 1305.333333F
-#define YAW_PULSE_PER_DEG 3533.402941F
+#define PITCH_PULSE_PER_DEG 2290.57777F // positive number only
+#define YAW_PULSE_PER_DEG 3517.76765F  // positive number only
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -587,6 +587,7 @@ void StartTask_WorkFlow(void *argument)
 
         // here need trans raw pitch to degree pitch
         g_pitch = (int16_t)((g_pitch_raw - g_pitch_offset) / PITCH_PULSE_PER_DEG * 10.0F);
+        g_pitch = (-1) * g_pitch;
         break;
       case 0x182: // yaw TPDO1
         if ((motor_rx_msg_temp.data[1] >> 2) && 0x01)
@@ -968,8 +969,10 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
       if (g_yaw_speed_dst_raw < 0)
         g_yaw_speed_dst_raw = 0;
       g_pitch_start_dst_raw = (int32_t)(g_pitch_start_dst / 10.0F * PITCH_PULSE_PER_DEG) + g_pitch_offset;
+      g_pitch_start_dst_raw = (-1) * g_pitch_start_dst_raw;
       g_pitch_start_dst_raw = Motor_Angle_Raw_Limit(g_pitch_start_dst_raw, 85 * PITCH_PULSE_PER_DEG, -85 * PITCH_PULSE_PER_DEG);
       g_pitch_end_dst_raw = (int32_t)(g_pitch_end_dst / 10.0F * PITCH_PULSE_PER_DEG) + g_pitch_offset;
+      g_pitch_end_dst_raw = (-1) * g_pitch_end_dst_raw;
       g_pitch_end_dst_raw = Motor_Angle_Raw_Limit(g_pitch_end_dst_raw, 85 * PITCH_PULSE_PER_DEG, -85 * PITCH_PULSE_PER_DEG);
       g_pitch_speed_dst_raw = (int16_t)(g_pitch_speed_dst * 60.0F / 360.0F * 60.0F / 34.0F);
       if (g_pitch_speed_dst_raw > 5000)
@@ -1027,6 +1030,7 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
       g_yaw_end_dst_raw = (int32_t)(g_yaw_end_dst / 10.0F * YAW_PULSE_PER_DEG) + g_yaw_offset;
       g_yaw_end_dst_raw = Motor_Angle_Raw_Limit(g_yaw_end_dst_raw, 165 * YAW_PULSE_PER_DEG, -165 * YAW_PULSE_PER_DEG);
       g_pitch_end_dst_raw = (int32_t)(g_pitch_end_dst / 10.0F * PITCH_PULSE_PER_DEG) + g_pitch_offset;
+      g_pitch_end_dst_raw = (-1) * g_pitch_end_dst_raw;
       g_pitch_end_dst_raw = Motor_Angle_Raw_Limit(g_pitch_end_dst_raw, 85 * PITCH_PULSE_PER_DEG, -85 * PITCH_PULSE_PER_DEG);
 
       g_motion_mode = 0;
@@ -1218,6 +1222,7 @@ void Ctrl_Msg_Decoding(Ctrl_Com_Msg *msg)
       g_yaw_end_dst_raw = (int32_t)(g_yaw_end_dst / 10.0F * YAW_PULSE_PER_DEG) + g_yaw_offset;
       g_yaw_end_dst_raw = Motor_Angle_Raw_Limit(g_yaw_end_dst_raw, 165 * YAW_PULSE_PER_DEG, -165 * YAW_PULSE_PER_DEG);
       g_pitch_end_dst_raw = (int32_t)(g_pitch_end_dst / 10.0F * PITCH_PULSE_PER_DEG) + g_pitch_offset;
+      g_pitch_end_dst_raw = (-1) * g_pitch_end_dst_raw;
       g_pitch_end_dst_raw = Motor_Angle_Raw_Limit(g_pitch_end_dst_raw, 85 * PITCH_PULSE_PER_DEG, -85 * PITCH_PULSE_PER_DEG);
 
       g_motion_mode = 2;

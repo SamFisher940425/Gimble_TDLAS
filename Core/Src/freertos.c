@@ -559,6 +559,7 @@ void StartTask_WorkFlow(void *argument)
       switch (motor_rx_msg_temp.head.StdId)
       {
       case 0x181: // pitch TPDO1
+      case 0x281: // pitch TPDO2
         if ((motor_rx_msg_temp.data[1] >> 2) && 0x01)
         {
           g_motion_status &= ~(0x01);
@@ -590,6 +591,7 @@ void StartTask_WorkFlow(void *argument)
         g_pitch = (-1) * g_pitch;
         break;
       case 0x182: // yaw TPDO1
+      case 0x282: // yaw TPDO2
         if ((motor_rx_msg_temp.data[1] >> 2) && 0x01)
         {
           g_motion_status &= ~(0x02);
